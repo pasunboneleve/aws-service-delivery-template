@@ -1,0 +1,35 @@
+# AI droppings
+.aider*
+
+
+# Secrets
+**/*.tfvars
+**/.env
+
+# Terraform/OpenTofu
+infra/.terraform/
+infra/*.tfstate
+infra/*.tfstate.*
+infra/.terraform.lock.hcl
+infra/terraform.tfvars
+infra/prod.tfvars
+infra/dev.tfvars
+infra/*.auto.tfvars
+
+# Service account keys (if any)
+*.json
+*-key.json
+*-credentials.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+**/.\#*
+
+# macOS
+.DS_Store
+
+# Logs
+*.log

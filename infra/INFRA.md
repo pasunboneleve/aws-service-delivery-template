@@ -1,0 +1,48 @@
+# Infrastructure
+
+This directory provisions the AWS-side delivery foundation:
+
+- an ECR repository for application images
+- an IAM OIDC provider for GitHub Actions
+- an IAM deploy role that GitHub Actions can assume on `main`
+- an App Runner access role that allows the runtime to pull from ECR
+- a GitHub Actions secret, `AWS_ROLE_TO_ASSUME`, populated through the GitHub provider
+
+## Prerequisites
+
+- AWS credentials available in your shell via `AWS_PROFILE` or the standard `AWS_*` environment variables
+- `GITHUB_TOKEN` available in your shell if you want Terraform to manage the repository secret
+- OpenTofu or Terraform 1.6+
+- AWS CLI for backend bootstrap
+
+## 1) Create a remote state bucket
+
+```bash
+export AWS_REGION=ap-southeast-2
+export TF_STATE_BUCKET=your-unique-tf-state-bucket
+./scripts/bootstrap-tf-state.sh
+```
+
+## 2) Initialize the S3 backend
+
+```bash
+cd infra
+tofu init \
+  -backend-config="bucket=$TF_STATE_BUCKET" \
+  -backend-config="key=$GITHUB_REPO/infra.tfstate" \
+  -backend-config="region=$AWS_REGION" \
+  -backend-config="use_lockfile=true"
+```
+
+## 3) Apply the infrastructure
+
+```bash
+cp prod.tfvars.template prod.tfvars
+tofu apply -var-file="prod.tfvars"
+```
+
+Useful outputs include:
+
+- `ecr_repository_url`
+- `github_actions_role_arn`
+- `app_runner_ecr_access_role_arn`

@@ -1,0 +1,23 @@
+# Production Configuration Template
+# Copy this file to prod.tfvars and fill in your actual values.
+#
+# AWS credentials are intentionally NOT stored here.
+# Terraform picks them up from your shell environment, for example:
+#   export AWS_PROFILE=your-profile
+# or
+#   export AWS_ACCESS_KEY_ID=...
+#   export AWS_SECRET_ACCESS_KEY=...
+
+aws_region              = "ap-southeast-2"
+ecr_repository_name     = "your-ecr-repository"
+app_runner_service_name = "your-app-runner-service"
+github_owner            = "your-github-username-or-org"
+github_repo             = "your-github-repository"
+github_branch           = "main"
+
+# Optional:
+# github_environment    = "production"
+# github_token          = "ghp_xxx" # Or prefer exporting GITHUB_TOKEN in your shell
+# image_port            = 8080
+# apprunner_cpu         = "1 vCPU"
+# apprunner_memory      = "2 GB"

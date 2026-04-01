@@ -1,0 +1,97 @@
+name: Deploy to AWS App Runner
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Build and Deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check configuration
+        run: |
+          if [ ! -f deploy.env ]; then
+            echo "This is a template repository. Commit deploy.env after copying deploy.env.template."
+            exit 1
+          fi
+
+          if [ -z "${{ secrets.AWS_ROLE_TO_ASSUME }}" ]; then
+            echo "Configure the AWS_ROLE_TO_ASSUME GitHub Actions secret before running CI."
+            exit 1
+          fi
+
+          if [ -z "${{ secrets.AWS_APP_RUNNER_ECR_ACCESS_ROLE_ARN }}" ]; then
+            echo "Configure the AWS_APP_RUNNER_ECR_ACCESS_ROLE_ARN GitHub Actions secret before running CI."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load deploy env
+        run: |
+          grep -v '^[[:space:]]*#' deploy.env | grep -v '^[[:space:]]*$' >> "$GITHUB_ENV"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push container image
+        id: build-image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.AWS_ECR_REPOSITORY }}:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.AWS_ECR_REPOSITORY }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Create or update App Runner service
+        env:
+          IMAGE_IDENTIFIER: ${{ steps.login-ecr.outputs.registry }}/${{ env.AWS_ECR_REPOSITORY }}:${{ github.sha }}
+          APP_RUNNER_PORT: ${{ env.AWS_APP_RUNNER_PORT }}
+          ECR_ACCESS_ROLE_ARN: ${{ secrets.AWS_APP_RUNNER_ECR_ACCESS_ROLE_ARN }}
+        run: |
+          if [ -z "${APP_RUNNER_PORT}" ]; then
+            APP_RUNNER_PORT=8080
+          fi
+
+          SERVICE_ARN=$(
+            aws apprunner list-services \
+              --query "ServiceSummaryList[?ServiceName=='${AWS_APP_RUNNER_SERVICE_NAME}'].ServiceArn | [0]" \
+              --output text
+          )
+
+          if [ "${SERVICE_ARN}" = "None" ]; then
+            aws apprunner create-service \
+              --service-name "${AWS_APP_RUNNER_SERVICE_NAME}" \
+              --source-configuration "AuthenticationConfiguration={AccessRoleArn=${ECR_ACCESS_ROLE_ARN}},AutoDeploymentsEnabled=false,ImageRepository={ImageIdentifier=${IMAGE_IDENTIFIER},ImageRepositoryType=ECR,ImageConfiguration={Port=${APP_RUNNER_PORT}}}" \
+              --instance-configuration Cpu="1 vCPU",Memory="2 GB"
+          else
+            aws apprunner update-service \
+              --service-arn "${SERVICE_ARN}" \
+              --source-configuration "AuthenticationConfiguration={AccessRoleArn=${ECR_ACCESS_ROLE_ARN}},AutoDeploymentsEnabled=false,ImageRepository={ImageIdentifier=${IMAGE_IDENTIFIER},ImageRepositoryType=ECR,ImageConfiguration={Port=${APP_RUNNER_PORT}}}"
+          fi
+
+      - name: Show service URL
+        run: |
+          aws apprunner list-services \
+            --query "ServiceSummaryList[?ServiceName=='${AWS_APP_RUNNER_SERVICE_NAME}'].ServiceUrl | [0]" \
+            --output text
