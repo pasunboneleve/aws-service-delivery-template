@@ -1,9 +1,5 @@
 data "aws_caller_identity" "current" {}
 
-locals {
-  service_name = var.service_name
-}
-
 data "aws_iam_policy_document" "github_oidc_assume_role" {
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
@@ -110,7 +106,7 @@ resource "aws_iam_openid_connect_provider" "github" {
 }
 
 resource "aws_ecr_repository" "images" {
-  name                 = local.service_name
+  name                 = var.service_name
   image_tag_mutability = var.image_tag_mutability
 
   image_scanning_configuration {
@@ -119,7 +115,7 @@ resource "aws_ecr_repository" "images" {
 }
 
 resource "aws_iam_role" "app_runner_ecr_access" {
-  name               = "${local.service_name}-apprunner-ecr-access"
+  name               = "${var.service_name}-apprunner-ecr-access"
   assume_role_policy = data.aws_iam_policy_document.app_runner_ecr_assume_role.json
 }
 

@@ -31,8 +31,8 @@ jobs:
             exit 1
           fi
 
-          if [ -z "${{ vars.AWS_REGION }}" ] || [ -z "${{ vars.AWS_ECR_REPOSITORY }}" ] || [ -z "${{ vars.AWS_APP_RUNNER_SERVICE_NAME }}" ]; then
-            echo "Configure AWS_REGION, AWS_ECR_REPOSITORY, and AWS_APP_RUNNER_SERVICE_NAME GitHub Actions variables before running CI."
+          if [ -z "${{ vars.AWS_REGION }}" ] || [ -z "${{ vars.AWS_ECR_REPOSITORY }}" ] || [ -z "${{ vars.AWS_APP_RUNNER_SERVICE_NAME }}" ] || [ -z "${{ vars.AWS_APP_RUNNER_PORT }}" ]; then
+            echo "Configure AWS_REGION, AWS_ECR_REPOSITORY, AWS_APP_RUNNER_SERVICE_NAME, and AWS_APP_RUNNER_PORT GitHub Actions variables before running CI."
             exit 1
           fi
 
