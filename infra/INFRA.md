@@ -54,7 +54,7 @@ the AWS CLI can successfully use the same profile.
 
 ```bash
 cp prod.tfvars.template prod.tfvars
-tofu apply -var-file="prod.tfvars"
+tofu apply
 ```
 
 Useful outputs include:

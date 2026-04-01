@@ -80,6 +80,11 @@ cp .env.template .env
 direnv allow
 ```
 
+With `direnv` loaded, `tofu plan`, `tofu apply`, and `tofu destroy`
+automatically use `infra/prod.tfvars`.
+If `AWS_PROFILE` is set, `direnv reload` also refreshes exported AWS
+session credentials using `aws configure export-credentials`.
+
 2. Create the Terraform state bucket:
 
 ```bash
@@ -101,7 +106,7 @@ tofu init \
 4. Apply the infrastructure:
 
 ```bash
-tofu apply -var-file="prod.tfvars"
+tofu apply
 ```
 
 5. Add your application code and `Dockerfile`.

@@ -39,7 +39,7 @@ tofu init \
   -backend-config="key=$(basename \"$(git rev-parse --show-toplevel)\")/infra.tfstate" \
   -backend-config="region={{AWS_REGION}}" \
   -backend-config="use_lockfile=true"
-tofu apply -var-file="prod.tfvars"
+tofu apply
 ```
 
 ## Architecture Overview
