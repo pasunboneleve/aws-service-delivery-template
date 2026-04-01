@@ -23,7 +23,6 @@ Set required environment variables first:
 export AWS_PROFILE={{AWS_PROFILE}}
 export AWS_REGION={{AWS_REGION}}
 export TF_STATE_BUCKET={{TF_STATE_BUCKET}}
-export GITHUB_REPO={{GITHUB_REPO}}
 ```
 
 ### Infrastructure Management
@@ -37,7 +36,7 @@ Apply infrastructure:
 cd infra
 tofu init \
   -backend-config="bucket={{TF_STATE_BUCKET}}" \
-  -backend-config="key={{GITHUB_REPO}}/infra.tfstate" \
+  -backend-config="key=$(basename \"$(git rev-parse --show-toplevel)\")/infra.tfstate" \
   -backend-config="region={{AWS_REGION}}" \
   -backend-config="use_lockfile=true"
 tofu apply -var-file="prod.tfvars"

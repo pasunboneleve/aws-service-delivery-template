@@ -9,8 +9,7 @@
 #   export AWS_SECRET_ACCESS_KEY=...
 
 aws_region              = "ap-southeast-2"
-ecr_repository_name     = "your-ecr-repository"
-app_runner_service_name = "your-app-runner-service"
+service_name            = "your-service-name"
 github_owner            = "your-github-username-or-org"
 github_repo             = "your-github-repository"
 github_branch           = "main"

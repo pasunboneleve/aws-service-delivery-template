@@ -22,8 +22,7 @@ They come from your shell environment, matching the `AWS_PROFILE` or
 This repository is a template. The workflow is expected to fail until:
 
 - Terraform has provisioned the AWS infrastructure
-- the GitHub Actions secrets have been created
-- `deploy.env` has been committed with the right repository settings
+- the GitHub Actions secrets and variables have been created
 
 Capabilities provided
 ---------------------
@@ -68,10 +67,8 @@ Repository structure
   Builds the image, pushes it to ECR, and creates or updates App Runner.
 - `.env.template`
   Local environment template for AWS and GitHub provider auth.
-- `deploy.env.template`
-  Repository-committed deployment settings consumed by the workflow.
 - `infra/`
-  Terraform for OIDC, ECR, IAM roles, and GitHub Actions secrets.
+  Terraform for OIDC, ECR, IAM roles, and GitHub Actions secrets and variables.
 
 Bootstrapping a new project
 ---------------------------
@@ -96,7 +93,7 @@ cd infra
 cp prod.tfvars.template prod.tfvars
 tofu init \
   -backend-config="bucket=$TF_STATE_BUCKET" \
-  -backend-config="key=$GITHUB_REPO/infra.tfstate" \
+  -backend-config="key=$(basename "$(git rev-parse --show-toplevel)")/infra.tfstate" \
   -backend-config="region=$AWS_REGION" \
   -backend-config="use_lockfile=true"
 ```
@@ -107,16 +104,9 @@ tofu init \
 tofu apply -var-file="prod.tfvars"
 ```
 
-5. Create `deploy.env` from the template, update the values, and commit it:
+5. Add your application code and `Dockerfile`.
 
-```bash
-cd ..
-cp deploy.env.template deploy.env
-```
-
-6. Add your application code and `Dockerfile`.
-
-7. Push to `main`.
+6. Push to `main`.
 
 The workflow will build the image, push it to ECR, and create or update
 the App Runner service.
@@ -131,6 +121,7 @@ Assumptions
 - deployment targets a public HTTP service on AWS App Runner
 - GitHub Actions is the CI/CD system
 - Terraform/OpenTofu manages the shared deployment infrastructure
+- Terraform manages the GitHub Actions secrets and variables used by CI
 - local AWS authentication comes from the shell environment, not tfvars
 
 Scope

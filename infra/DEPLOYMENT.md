@@ -30,7 +30,7 @@ direnv allow
 cd infra
 tofu init \
   -backend-config="bucket=$TF_STATE_BUCKET" \
-  -backend-config="key=$GITHUB_REPO/infra.tfstate" \
+  -backend-config="key=$(basename "$(git rev-parse --show-toplevel)")/infra.tfstate" \
   -backend-config="region=$AWS_REGION" \
   -backend-config="use_lockfile=true"
 ```
@@ -45,4 +45,5 @@ tofu apply -var-file="prod.tfvars"
 
 4. Push an application with a `Dockerfile` to `main`.
 
-The GitHub Actions workflow will build the image, push it to ECR, and create or update the App Runner service.
+Terraform will populate the GitHub Actions secrets and variables used by the workflow.
+The GitHub Actions workflow will then build the image, push it to ECR, and create or update the App Runner service.

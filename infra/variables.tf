@@ -3,13 +3,8 @@ variable "aws_region" {
   type        = string
 }
 
-variable "ecr_repository_name" {
-  description = "Name of the ECR repository that stores deployable images."
-  type        = string
-}
-
-variable "app_runner_service_name" {
-  description = "Name of the App Runner service managed by GitHub Actions."
+variable "service_name" {
+  description = "Base service name used for the ECR repository and App Runner service."
   type        = string
 }
 

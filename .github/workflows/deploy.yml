@@ -12,15 +12,15 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ECR_REPOSITORY: ${{ vars.AWS_ECR_REPOSITORY }}
+      AWS_APP_RUNNER_SERVICE_NAME: ${{ vars.AWS_APP_RUNNER_SERVICE_NAME }}
+      AWS_APP_RUNNER_PORT: ${{ vars.AWS_APP_RUNNER_PORT }}
 
     steps:
       - name: Check configuration
         run: |
-          if [ ! -f deploy.env ]; then
-            echo "This is a template repository. Commit deploy.env after copying deploy.env.template."
-            exit 1
-          fi
-
           if [ -z "${{ secrets.AWS_ROLE_TO_ASSUME }}" ]; then
             echo "Configure the AWS_ROLE_TO_ASSUME GitHub Actions secret before running CI."
             exit 1
@@ -31,12 +31,13 @@ jobs:
             exit 1
           fi
 
+          if [ -z "${{ vars.AWS_REGION }}" ] || [ -z "${{ vars.AWS_ECR_REPOSITORY }}" ] || [ -z "${{ vars.AWS_APP_RUNNER_SERVICE_NAME }}" ]; then
+            echo "Configure AWS_REGION, AWS_ECR_REPOSITORY, and AWS_APP_RUNNER_SERVICE_NAME GitHub Actions variables before running CI."
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Load deploy env
-        run: |
-          grep -v '^[[:space:]]*#' deploy.env | grep -v '^[[:space:]]*$' >> "$GITHUB_ENV"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
