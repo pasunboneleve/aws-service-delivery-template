@@ -35,6 +35,20 @@ tofu init \
   -backend-config="use_lockfile=true"
 ```
 
+If `tofu init` fails with `No valid credential sources found` while
+using an AWS CLI profile, export temporary credentials into the
+environment first:
+
+```bash
+eval "$(
+  aws configure export-credentials \
+    --profile <your-profile> \
+    --format env
+)"
+```
+
+Then rerun `tofu init`.
+
 3. Apply infrastructure:
 
 ```bash

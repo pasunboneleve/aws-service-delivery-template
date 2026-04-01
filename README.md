@@ -107,6 +107,21 @@ tofu init \
 tofu apply -var-file="prod.tfvars"
 ```
 
+If `tofu init` fails with `No valid credential sources found` while
+using an AWS CLI profile, export temporary credentials into the
+environment first:
+
+```bash
+eval "$(
+  aws configure export-credentials \
+    --profile <your-profile> \
+    --format env
+)"
+```
+
+Then run `tofu init` again. This can be necessary for the S3 backend
+even when `aws sts get-caller-identity` works with the same profile.
+
 5. Create `deploy.env` from the template, update the values, and commit it:
 
 ```bash
