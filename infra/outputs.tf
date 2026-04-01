@@ -22,3 +22,13 @@ output "app_runner_ecr_access_role_arn" {
   description = "IAM role used by App Runner to pull images from ECR."
   value       = aws_iam_role.app_runner_ecr_access.arn
 }
+
+output "app_runner_service_arn" {
+  description = "ARN of the Terraform-managed App Runner service."
+  value       = try(aws_apprunner_service.service[0].arn, null)
+}
+
+output "service_url" {
+  description = "Public App Runner service URL."
+  value       = try(format("https://%s", aws_apprunner_service.service[0].service_url), null)
+}

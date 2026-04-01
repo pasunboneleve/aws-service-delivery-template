@@ -1,6 +1,13 @@
 Minimal AWS Delivery Platform
 =============================
 
+Live URL
+--------
+
+<!-- LIVE_URL_START -->
+- Service URL: `TODO`
+<!-- LIVE_URL_END -->
+
 This repository is a fresh AWS counterpart to the GCP template. It gives
 new services a minimal paved road for container delivery with GitHub
 Actions, Terraform/OpenTofu, Amazon ECR, and AWS App Runner.
@@ -10,7 +17,7 @@ The shape is intentionally small:
 - Terraform provisions the AWS-side deployment foundation
 - GitHub Actions builds and pushes a container image
 - GitHub Actions assumes an AWS role through GitHub OIDC
-- App Runner is created or updated directly from the workflow
+- App Runner is provisioned by Terraform and updated directly from the workflow
 
 AWS credentials for local Terraform are not stored in `prod.tfvars`.
 They come from your shell environment, matching the `AWS_PROFILE` or
@@ -55,7 +62,7 @@ Build container image
 Push to Amazon ECR
       |
       v
-Create or update AWS App Runner service
+Update AWS App Runner service
 ```
 
 Repository structure
@@ -64,11 +71,13 @@ Repository structure
 - `scripts/bootstrap-tf-state.sh`
   Creates and hardens the S3 bucket used for Terraform/OpenTofu state.
 - `.github/workflows/deploy.yml`
-  Builds the image, pushes it to ECR, and creates or updates App Runner.
+  Builds the image, pushes it to ECR, and updates App Runner.
 - `.env.template`
   Local environment template for AWS and GitHub provider auth.
 - `infra/`
-  Terraform for OIDC, ECR, IAM roles, and GitHub Actions secrets and variables.
+  Terraform for OIDC, ECR, IAM roles, App Runner, and GitHub Actions secrets and variables.
+- `scripts/update-readme-live-url.sh`
+  Updates the live URL block in the README from `tofu output`.
 
 Bootstrapping a new project
 ---------------------------
@@ -80,7 +89,7 @@ cp .env.template .env
 direnv allow
 ```
 
-With `direnv` loaded, `tofu plan`, `tofu apply`, and `tofu destroy`
+With `direnv` loaded, `tofu plan`, `tofu apply`, `tofu destroy`, and `tofu import`
 automatically use `infra/prod.tfvars`.
 If `AWS_PROFILE` is set, `direnv reload` also refreshes exported AWS
 session credentials using `aws configure export-credentials`.
@@ -110,14 +119,22 @@ tofu apply
 ```
 
 5. Add your application code and `Dockerfile`.
+6. Push to `main` once so GitHub Actions publishes the bootstrap `latest` image to ECR.
+7. Run `tofu apply` again so Terraform can create the App Runner service from that image.
+8. Refresh the README live URL block:
 
-6. Push to `main`.
+```bash
+./scripts/update-readme-live-url.sh
+```
 
-The workflow will build the image, push it to ECR, and create or update
-the App Runner service.
+The workflow will build the image, push it to ECR, and update the
+Terraform-managed App Runner service.
 
 If the S3 backend refuses to use your AWS CLI profile during `tofu init`,
 see the troubleshooting note in [`infra/INFRA.md`](infra/INFRA.md).
+If `tofu output -raw service_url` is still empty after the first apply,
+that just means the bootstrap image does not exist in ECR yet. Push once,
+then rerun `tofu apply`.
 
 Assumptions
 -----------

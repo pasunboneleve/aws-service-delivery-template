@@ -6,6 +6,7 @@ This directory provisions the AWS-side delivery foundation:
 - an IAM OIDC provider for GitHub Actions
 - an IAM deploy role that GitHub Actions can assume on `main`
 - an App Runner access role that allows the runtime to pull from ECR
+- an App Runner service once the bootstrap image exists in ECR
 - GitHub Actions secrets for role ARNs
 - GitHub Actions variables for region, repository, and service settings
 
@@ -62,3 +63,11 @@ Useful outputs include:
 - `ecr_repository_url`
 - `github_actions_role_arn`
 - `app_runner_ecr_access_role_arn`
+- `app_runner_service_arn`
+- `service_url`
+
+If `service_url` is `null`, the configured bootstrap tag does not exist in ECR yet. Push one image to `main`, rerun `tofu apply`, then update the README:
+
+```bash
+../scripts/update-readme-live-url.sh
+```

@@ -17,6 +17,7 @@ github_branch           = "main"
 # Optional:
 # github_environment    = "production"
 # github_token          = "ghp_xxx" # Or prefer exporting GITHUB_TOKEN in your shell
+# apprunner_image_tag   = "latest"
 # image_port            = 8080
 # apprunner_cpu         = "1 vCPU"
 # apprunner_memory      = "2 GB"

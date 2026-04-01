@@ -72,3 +72,9 @@ variable "apprunner_memory" {
   type        = string
   default     = "2 GB"
 }
+
+variable "apprunner_image_tag" {
+  description = "Container image tag Terraform should use when creating or recreating the App Runner service."
+  type        = string
+  default     = "latest"
+}
