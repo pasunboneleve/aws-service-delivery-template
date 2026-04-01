@@ -13,7 +13,7 @@ fi
 LIVE_URL="$(cd "${INFRA_DIR}" && tofu output -raw service_url 2>/dev/null || true)"
 
 if [ -n "${LIVE_URL}" ]; then
-  LIVE_URL_LINE="- Service URL: \`${LIVE_URL}\`"
+  LIVE_URL_LINE="- Service URL: [Live URL](${LIVE_URL})"
 else
   LIVE_URL_LINE="- Service URL: \`TODO\`"
 fi
