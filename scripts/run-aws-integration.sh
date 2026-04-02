@@ -246,6 +246,7 @@ run_bootstrap_publish() {
   local local_image_tag=""
 
   require_materialized_value "AWS_REGION" "${AWS_REGION:-}"
+  validate_optional_env "AWS_INTEGRATION_AWS_ACCOUNT_ID" "${aws_account_id}" '^[0-9]{12}$'
   require_command aws
   require_command docker
 
