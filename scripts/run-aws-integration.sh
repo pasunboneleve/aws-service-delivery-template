@@ -21,11 +21,12 @@ BACKEND_CONFIG_PATH=""
 METADATA_PATH=""
 FIXTURE_DIR="${ROOT_DIR}/integration-fixture"
 REMOTE_IMAGE_URI=""
+VERIFY_RESPONSE_PATH=""
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/run-aws-integration.sh [plan|foundation-apply|bootstrap-publish|second-apply]
+  ./scripts/run-aws-integration.sh [plan|foundation-apply|bootstrap-publish|second-apply|verify]
 
 This is the Phase 2 AWS integration runner skeleton.
 Current behavior:
@@ -36,6 +37,7 @@ Current behavior:
   - optionally performs the first foundation apply
   - optionally builds and pushes the bootstrap fixture image
   - optionally performs the second apply and fetches the service URL
+  - optionally verifies the public fixture response
 
 Environment overrides:
   AWS_INTEGRATION_RUN_ID       Override the generated run id
@@ -44,6 +46,7 @@ Environment overrides:
   AWS_INTEGRATION_AUTO_APPROVE Set to 0 to omit -auto-approve on apply
   AWS_INTEGRATION_AWS_ACCOUNT_ID
                                Override the AWS account id instead of querying STS
+  AWS_INTEGRATION_VERIFY_PATH  HTTP path to verify (default: /)
 EOF
 }
 
@@ -202,8 +205,7 @@ Planned AWS integration sequence
    ./scripts/run-aws-integration.sh second-apply
 
 5. Fetch the App Runner service URL and verify the public fixture response.
-   The second-apply mode fetches the URL from tofu output, then falls back to
-   AWS App Runner service discovery if needed.
+   ./scripts/run-aws-integration.sh verify
 
 6. Destroy the isolated integration stack and remove temp artifacts:
    tofu destroy -var-file="${TFVARS_PATH}"
@@ -213,8 +215,8 @@ Current boundary:
 - This runner now supports the isolated foundation apply.
 - It now supports publishing the bootstrap fixture image.
 - It now supports the second apply and service URL fetch.
-- It still does not verify the public response body or destroy integration
-  infrastructure.
+- It now supports public fixture-response verification.
+- It still does not destroy integration infrastructure.
 EOF
 }
 
@@ -371,13 +373,94 @@ run_second_apply() {
   echo "Service URL: ${service_url}"
 }
 
+run_verify() {
+  local service_url=""
+  local verify_path="${AWS_INTEGRATION_VERIFY_PATH:-/}"
+
+  require_command python3
+
+  service_url="$(fetch_service_url)"
+  VERIFY_RESPONSE_PATH="${WORKDIR}/verify-response.json"
+
+  echo
+  echo "Verifying public fixture response"
+  echo "Service URL: ${service_url}"
+  echo "Verify path: ${verify_path}"
+  echo "Response capture: ${VERIFY_RESPONSE_PATH}"
+
+  python3 - "${service_url}" "${verify_path}" "${VERIFY_RESPONSE_PATH}" <<'PY'
+import json
+import sys
+from pathlib import Path
+from urllib import error, parse, request
+
+service_url = sys.argv[1]
+verify_path = sys.argv[2]
+response_path = Path(sys.argv[3])
+
+if not verify_path.startswith("/"):
+    verify_path = "/" + verify_path
+
+target_url = parse.urljoin(service_url.rstrip("/") + "/", verify_path.lstrip("/"))
+
+try:
+    with request.urlopen(target_url, timeout=30) as response:
+        status_code = response.getcode()
+        body = response.read().decode("utf-8")
+except error.HTTPError as exc:
+    print(f"Fixture verification failed with HTTP {exc.code}: {target_url}", file=sys.stderr)
+    sys.exit(1)
+except error.URLError as exc:
+    print(f"Fixture verification failed to reach {target_url}: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+if status_code != 200:
+    print(f"Fixture verification returned unexpected status {status_code}: {target_url}", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    payload = json.loads(body)
+except json.JSONDecodeError as exc:
+    print(f"Fixture verification returned invalid JSON from {target_url}: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+expected_service = "minimal-aws-github-ci-template"
+expected_status = "ok"
+expected_path = verify_path
+
+if payload.get("status") != expected_status:
+    print(
+        f"Fixture verification expected status={expected_status!r} but got {payload.get('status')!r}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+if payload.get("service") != expected_service:
+    print(
+        f"Fixture verification expected service={expected_service!r} but got {payload.get('service')!r}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+if payload.get("path") != expected_path:
+    print(
+        f"Fixture verification expected path={expected_path!r} but got {payload.get('path')!r}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+response_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+print(f"Fixture verification passed: {target_url}")
+PY
+}
+
 main() {
   if [ "${MODE}" = "--help" ] || [ "${MODE}" = "-h" ]; then
     usage
     exit 0
   fi
 
-  if [ "${MODE}" != "plan" ] && [ "${MODE}" != "foundation-apply" ] && [ "${MODE}" != "bootstrap-publish" ] && [ "${MODE}" != "second-apply" ]; then
+  if [ "${MODE}" != "plan" ] && [ "${MODE}" != "foundation-apply" ] && [ "${MODE}" != "bootstrap-publish" ] && [ "${MODE}" != "second-apply" ] && [ "${MODE}" != "verify" ]; then
     echo "Unsupported mode: ${MODE}" >&2
     usage >&2
     exit 1
@@ -408,7 +491,12 @@ main() {
     return
   fi
 
-  run_second_apply
+  if [ "${MODE}" = "second-apply" ]; then
+    run_second_apply
+    return
+  fi
+
+  run_verify
 }
 
 main "$@"

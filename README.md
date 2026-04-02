@@ -104,9 +104,10 @@ The first Phase 2 AWS integration entrypoint is now present:
 At the moment this is a runner skeleton. It prepares isolated naming and temp
 configuration for a real-cloud integration run, and it can now perform the
 first isolated foundation apply, publish the bootstrap fixture image, and run
-the second apply to fetch the service URL. Later steps still remain TODO. See
+the second apply to fetch the service URL and verify the public fixture
+response. The remaining TODO is reliable destroy/cleanup. See
 [`docs/aws-integration.md`](docs/aws-integration.md) for the current scope and
-TODO boundaries.
+fixture contract.
 
 Bootstrapping a new project
 ---------------------------

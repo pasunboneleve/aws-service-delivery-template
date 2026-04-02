@@ -7,6 +7,7 @@ This document describes the Phase 2 AWS integration lane entrypoint:
 ./scripts/run-aws-integration.sh foundation-apply
 ./scripts/run-aws-integration.sh bootstrap-publish
 ./scripts/run-aws-integration.sh second-apply
+./scripts/run-aws-integration.sh verify
 ```
 
 Current status:
@@ -21,6 +22,7 @@ Current status:
 - it can run the first isolated `tofu init` + `tofu apply` for foundation resources
 - it can build and push the bootstrap fixture image to ECR
 - it can run the second isolated apply and fetch the service URL
+- it can verify the public fixture response at the service URL
 
 Current naming strategy:
 
@@ -36,9 +38,8 @@ Current naming strategy:
 - `image_tag`
   uses `integration-<run-id>`
 
-Current TODO boundaries:
+Current TODO boundary:
 
-- verifying the public App Runner response body
 - reliable destroy on partial failures
 
 Environment variables used by the skeleton:
@@ -113,3 +114,38 @@ GITHUB_OWNER=your-github-owner \
 The runner first checks `tofu output -raw service_url`.
 If that is still empty, it falls back to `aws apprunner list-services`.
 If neither path yields a URL, the run fails clearly.
+
+To verify the public fixture response after the second apply, run:
+
+```bash
+AWS_REGION=ap-southeast-2 \
+TF_STATE_BUCKET=your-state-bucket \
+GITHUB_OWNER=your-github-owner \
+./scripts/run-aws-integration.sh verify
+```
+
+The verification step performs an HTTP GET against the public service URL and
+expects this JSON contract:
+
+```json
+{
+  "status": "ok",
+  "service": "minimal-aws-github-ci-template",
+  "path": "/"
+}
+```
+
+You can override the verification path with:
+
+```bash
+AWS_INTEGRATION_VERIFY_PATH=/health
+```
+
+The runner fails clearly on:
+
+- HTTP errors such as private or broken endpoints
+- invalid JSON responses
+- unexpected `status`, `service`, or `path` values
+
+The verified response body is saved in the integration workdir as
+`verify-response.json`.
