@@ -297,10 +297,16 @@ run_bootstrap_publish() {
 
 fetch_service_url() {
   local service_url=""
+  local tofu_error_log="${WORKDIR}/tofu-service-url.stderr.log"
+  local aws_error_log="${WORKDIR}/aws-service-url.stderr.log"
 
-  service_url="$(
-    cd "${INFRA_DIR}" && tofu output -raw service_url 2>/dev/null || true
-  )"
+  if service_url="$(
+    cd "${INFRA_DIR}" && tofu output -raw service_url 2>"${tofu_error_log}"
+  )"; then
+    :
+  else
+    service_url=""
+  fi
 
   if [ -n "${service_url}" ]; then
     printf '%s' "${service_url}"
@@ -310,12 +316,16 @@ fetch_service_url() {
   require_command aws
   require_materialized_value "AWS_REGION" "${AWS_REGION:-}"
 
-  service_url="$(
+  if service_url="$(
     aws apprunner list-services \
       --region "${AWS_REGION}" \
       --query "ServiceSummaryList[?ServiceName=='${SERVICE_NAME}'].ServiceUrl | [0]" \
-      --output text 2>/dev/null || true
-  )"
+      --output text 2>"${aws_error_log}"
+  )"; then
+    :
+  else
+    service_url=""
+  fi
 
   if [ -n "${service_url}" ] && [ "${service_url}" != "None" ]; then
     printf '%s' "${service_url}"
@@ -323,6 +333,12 @@ fetch_service_url() {
   fi
 
   echo "Unable to determine App Runner service URL after second apply." >&2
+  if [ -s "${tofu_error_log}" ]; then
+    echo "tofu output stderr saved to ${tofu_error_log}" >&2
+  fi
+  if [ -s "${aws_error_log}" ]; then
+    echo "aws apprunner list-services stderr saved to ${aws_error_log}" >&2
+  fi
   return 1
 }
 
