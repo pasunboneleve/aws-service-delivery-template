@@ -4,6 +4,7 @@ This document describes the Phase 2 AWS integration lane entrypoint:
 
 ```bash
 ./scripts/run-aws-integration.sh
+./scripts/run-aws-integration.sh run
 ./scripts/run-aws-integration.sh foundation-apply
 ./scripts/run-aws-integration.sh bootstrap-publish
 ./scripts/run-aws-integration.sh second-apply
@@ -19,6 +20,7 @@ Current status:
   - `backend.hcl`
   - `integration-metadata.json`
 - it prints the intended command sequence for the real integration flow
+- it can run the full sequence with trap-based cleanup on failure
 - it can run the first isolated `tofu init` + `tofu apply` for foundation resources
 - it can build and push the bootstrap fixture image to ECR
 - it can run the second isolated apply and fetch the service URL
@@ -40,7 +42,7 @@ Current naming strategy:
 
 Current TODO boundary:
 
-- reliable destroy on partial failures
+- success-path destroy remains a separate follow-up
 
 Environment variables used by the skeleton:
 
@@ -50,11 +52,33 @@ Environment variables used by the skeleton:
   force a specific workdir instead of `mktemp`
 - `AWS_INTEGRATION_KEEP_WORKDIR=1`
   keep generated files after the runner exits
+- `AWS_INTEGRATION_CLEANUP_TIMEOUT_SECONDS`
+  bound the failure cleanup destroy duration
+- `AWS_INTEGRATION_SIMULATE_FAILURE_AT`
+  inject local failures into one or more steps for cleanup testing
 
 The runner intentionally does not mutate `infra/prod.tfvars`.
 It creates isolated integration config in a temporary working directory.
 If you provide `AWS_INTEGRATION_WORKDIR`, that directory is reused and left in
 place on exit.
+
+Failure handling behavior:
+
+- the runner emits step logs for:
+  - `config-materialization`
+  - `first-tofu-apply`
+  - `bootstrap-image-publish`
+  - `second-tofu-apply`
+  - `url-fetch`
+  - `verification`
+  - `destroy`
+- if a destructive mode fails after isolated config is materialized, an `EXIT`
+  trap attempts `tofu destroy` using the same generated `backend.hcl`,
+  `integration.tfvars`, and run id
+- the original failing step and exit code are preserved and reported first
+- if cleanup also fails, that is reported as a secondary failure and does not
+  mask the original exit
+- cleanup destroy is bounded by `AWS_INTEGRATION_CLEANUP_TIMEOUT_SECONDS`
 
 To run the first real foundation apply, you must provide:
 
@@ -76,6 +100,29 @@ If you want an interactive `tofu apply`, set:
 ```bash
 AWS_INTEGRATION_AUTO_APPROVE=0
 ```
+
+To exercise the full runner with failure cleanup enabled, use:
+
+```bash
+AWS_REGION=ap-southeast-2 \
+TF_STATE_BUCKET=your-state-bucket \
+GITHUB_OWNER=your-github-owner \
+./scripts/run-aws-integration.sh run
+```
+
+For local failure-path testing without real cloud calls, you can inject a
+simulated failure:
+
+```bash
+AWS_INTEGRATION_SIMULATE_FAILURE_AT=verification,destroy \
+./scripts/run-aws-integration.sh run
+```
+
+That is useful for validating that:
+
+- the original failure is reported against the correct step
+- cleanup destroy is still attempted
+- destroy failures are reported as secondary failures
 
 To publish the bootstrap image, you must provide:
 

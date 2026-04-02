@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# This runner keeps all integration state isolated to a generated workdir and
+# one run id. Failure handling is trap-based so cleanup can still attempt a
+# destroy with the same backend config and tfvars even when a step exits early.
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INFRA_DIR="${ROOT_DIR}/infra"
 REPO_NAME="$(basename "${ROOT_DIR}")"
@@ -22,11 +26,19 @@ METADATA_PATH=""
 FIXTURE_DIR="${ROOT_DIR}/integration-fixture"
 REMOTE_IMAGE_URI=""
 VERIFY_RESPONSE_PATH=""
+CURRENT_STEP="startup"
+ORIGINAL_EXIT_CODE=0
+CLEANUP_REQUIRED=0
+CLEANUP_ATTEMPTED=0
+CLEANUP_EXIT_CODE=0
+CLEANUP_TIMEOUT_SECONDS="${AWS_INTEGRATION_CLEANUP_TIMEOUT_SECONDS:-300}"
+SIMULATED_FAILURE_STEPS="${AWS_INTEGRATION_SIMULATE_FAILURE_AT:-}"
+TOFU_DESTROY_LOG_PATH=""
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/run-aws-integration.sh [plan|foundation-apply|bootstrap-publish|second-apply|verify]
+  ./scripts/run-aws-integration.sh [plan|run|foundation-apply|bootstrap-publish|second-apply|verify]
 
 This is the Phase 2 AWS integration runner skeleton.
 Current behavior:
@@ -34,6 +46,7 @@ Current behavior:
   - derives unique naming and state paths for an integration run
   - materializes isolated backend, tfvars, and metadata files
   - prints the intended command sequence and current TODO boundaries
+  - optionally runs the end-to-end integration sequence with failure cleanup
   - optionally performs the first foundation apply
   - optionally builds and pushes the bootstrap fixture image
   - optionally performs the second apply and fetches the service URL
@@ -46,11 +59,41 @@ Environment overrides:
   AWS_INTEGRATION_AUTO_APPROVE Set to 0 to omit -auto-approve on apply
   AWS_INTEGRATION_AWS_ACCOUNT_ID
                                Override the AWS account id instead of querying STS
+  AWS_INTEGRATION_CLEANUP_TIMEOUT_SECONDS
+                               Timeout in seconds for cleanup destroy (default: 300)
+  AWS_INTEGRATION_SIMULATE_FAILURE_AT
+                               Comma-separated step ids to fail locally:
+                               config-materialization,first-tofu-apply,
+                               bootstrap-image-publish,second-tofu-apply,
+                               url-fetch,verification,destroy
   AWS_INTEGRATION_VERIFY_PATH  HTTP path to verify (default: /)
 EOF
 }
 
-cleanup() {
+log_step() {
+  CURRENT_STEP="$1"
+  echo
+  echo "==> [${CURRENT_STEP}] $2"
+}
+
+note() {
+  echo "-- ${CURRENT_STEP}: $1"
+}
+
+fail_if_simulated() {
+  local step_id="$1"
+
+  if [ -z "${SIMULATED_FAILURE_STEPS}" ]; then
+    return
+  fi
+
+  if printf ',%s,' "${SIMULATED_FAILURE_STEPS}" | grep -Fq ",${step_id},"; then
+    echo "Simulated failure at step ${step_id}" >&2
+    exit 97
+  fi
+}
+
+cleanup_workdir() {
   if [ "${WORKDIR_CREATED}" != "1" ]; then
     if [ -n "${WORKDIR}" ]; then
       echo "Leaving user-supplied integration workdir in place: ${WORKDIR}"
@@ -66,6 +109,132 @@ cleanup() {
   if [ -n "${WORKDIR}" ] && [ -d "${WORKDIR}" ]; then
     rm -rf "${WORKDIR}"
   fi
+}
+
+run_with_timeout() {
+  local timeout_seconds="$1"
+  local logfile="$2"
+  shift 2
+
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --foreground "${timeout_seconds}" "$@" >>"${logfile}" 2>&1
+    return
+  fi
+
+  require_command python3
+  python3 - "${timeout_seconds}" "${logfile}" "$@" <<'PY'
+import subprocess
+import sys
+from pathlib import Path
+
+timeout_seconds = int(sys.argv[1])
+log_path = Path(sys.argv[2])
+cmd = sys.argv[3:]
+
+with log_path.open("a", encoding="utf-8") as log_file:
+    try:
+        completed = subprocess.run(
+            cmd,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            timeout=timeout_seconds,
+            check=False,
+            text=True,
+        )
+    except subprocess.TimeoutExpired:
+        print(f"Timed out after {timeout_seconds}s: {' '.join(cmd)}", file=log_file)
+        sys.exit(124)
+
+sys.exit(completed.returncode)
+PY
+}
+
+attempt_cleanup_destroy() {
+  local cleanup_script=""
+  local auto_approve="${AWS_INTEGRATION_AUTO_APPROVE:-1}"
+
+  if [ "${CLEANUP_REQUIRED}" != "1" ]; then
+    return 0
+  fi
+
+  CLEANUP_ATTEMPTED=1
+  log_step "destroy" "Attempting failure cleanup with isolated destroy"
+
+  if [ -z "${AWS_REGION:-}" ] || printf '%s' "${AWS_REGION:-}" | grep -q '^__SET_'; then
+    echo "Cleanup destroy skipped: AWS_REGION is not materialized." >&2
+    return 98
+  fi
+  if [ -z "${TF_STATE_BUCKET:-}" ] || printf '%s' "${TF_STATE_BUCKET:-}" | grep -q '^__SET_'; then
+    echo "Cleanup destroy skipped: TF_STATE_BUCKET is not materialized." >&2
+    return 98
+  fi
+  if [ -z "${GITHUB_OWNER:-}" ] || printf '%s' "${GITHUB_OWNER:-}" | grep -q '^__SET_'; then
+    echo "Cleanup destroy skipped: GITHUB_OWNER is not materialized." >&2
+    return 98
+  fi
+
+  if printf ',%s,' "${SIMULATED_FAILURE_STEPS}" | grep -Fq ',destroy,'; then
+    echo "Simulated failure at step destroy" >&2
+    return 97
+  fi
+
+  TOFU_DESTROY_LOG_PATH="${WORKDIR}/cleanup-destroy.log"
+  cleanup_script="${WORKDIR}/cleanup-destroy.sh"
+
+  cat > "${cleanup_script}" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+cd "${INFRA_DIR}"
+tofu init -backend-config="${BACKEND_CONFIG_PATH}"
+EOF
+
+  if [ "${auto_approve}" = "0" ]; then
+    cat >> "${cleanup_script}" <<EOF
+tofu destroy -var-file="${TFVARS_PATH}"
+EOF
+  else
+    cat >> "${cleanup_script}" <<EOF
+tofu destroy -auto-approve -var-file="${TFVARS_PATH}"
+EOF
+  fi
+
+  chmod +x "${cleanup_script}"
+
+  {
+    echo "Cleanup run id: ${RUN_ID}"
+    echo "Cleanup timeout seconds: ${CLEANUP_TIMEOUT_SECONDS}"
+    echo "Backend config: ${BACKEND_CONFIG_PATH}"
+    echo "Vars file: ${TFVARS_PATH}"
+  } > "${TOFU_DESTROY_LOG_PATH}"
+
+  run_with_timeout "${CLEANUP_TIMEOUT_SECONDS}" "${TOFU_DESTROY_LOG_PATH}" bash "${cleanup_script}"
+}
+
+finalize_run() {
+  local exit_code="$1"
+
+  trap - EXIT
+  set +e
+
+  if [ "${exit_code}" -ne 0 ]; then
+    echo "Integration runner failed during step '${CURRENT_STEP}' with exit code ${exit_code}." >&2
+    ORIGINAL_EXIT_CODE="${exit_code}"
+
+    if [ "${CLEANUP_REQUIRED}" = "1" ]; then
+      attempt_cleanup_destroy
+      CLEANUP_EXIT_CODE=$?
+      if [ "${CLEANUP_EXIT_CODE}" -ne 0 ]; then
+        echo "Cleanup also failed during step 'destroy' with exit code ${CLEANUP_EXIT_CODE}." >&2
+        if [ -n "${TOFU_DESTROY_LOG_PATH}" ] && [ -f "${TOFU_DESTROY_LOG_PATH}" ]; then
+          echo "Cleanup logs saved to ${TOFU_DESTROY_LOG_PATH}" >&2
+        fi
+      fi
+    fi
+  fi
+
+  cleanup_workdir
+
+  exit "${exit_code}"
 }
 
 require_command() {
@@ -105,6 +274,8 @@ trim_name() {
 }
 
 prepare_workdir() {
+  log_step "config-materialization" "Preparing isolated integration workspace"
+
   if [ -n "${WORKDIR}" ]; then
     mkdir -p "${WORKDIR}"
   else
@@ -117,6 +288,8 @@ materialize_tfvars() {
   local aws_region_placeholder
   local github_owner_placeholder
   local tf_state_bucket_placeholder
+
+  fail_if_simulated "config-materialization"
 
   INTEGRATION_PREFIX="$(slugify "${REPO_NAME}-${RUN_ID}")"
   SERVICE_NAME="$(trim_name "${INTEGRATION_PREFIX}")"
@@ -191,6 +364,9 @@ print_plan() {
   cat <<EOF
 
 Planned AWS integration sequence
+0. Run the end-to-end integration sequence with failure cleanup:
+   ./scripts/run-aws-integration.sh run
+
 1. Initialize OpenTofu with an isolated backend key:
    cd "${INFRA_DIR}"
    tofu init -backend-config="${BACKEND_CONFIG_PATH}"
@@ -209,14 +385,18 @@ Planned AWS integration sequence
 
 6. Destroy the isolated integration stack and remove temp artifacts:
    tofu destroy -var-file="${TFVARS_PATH}"
-   TODO: add cleanup safeguards for partial failures.
+   The runner now attempts this automatically on failure, bounded by a timeout.
 
 Current boundary:
+- The run mode now preserves the original failing exit code.
+- It reports destroy failures as secondary cleanup failures.
+- It now attempts isolated cleanup destroy from an EXIT trap when a
+  destructive step fails.
 - This runner now supports the isolated foundation apply.
 - It now supports publishing the bootstrap fixture image.
 - It now supports the second apply and service URL fetch.
 - It now supports public fixture-response verification.
-- It still does not destroy integration infrastructure.
+- Success-path destroy remains manual for now.
 EOF
 }
 
@@ -227,11 +407,11 @@ run_foundation_apply() {
   require_materialized_value "TF_STATE_BUCKET" "${TF_STATE_BUCKET:-}"
   require_materialized_value "GITHUB_OWNER" "${GITHUB_OWNER:-}"
 
-  echo
-  echo "Running isolated foundation apply"
-  echo "Infra dir: ${INFRA_DIR}"
-  echo "Backend config: ${BACKEND_CONFIG_PATH}"
-  echo "Vars file: ${TFVARS_PATH}"
+  log_step "first-tofu-apply" "Running isolated foundation apply"
+  note "Infra dir: ${INFRA_DIR}"
+  note "Backend config: ${BACKEND_CONFIG_PATH}"
+  note "Vars file: ${TFVARS_PATH}"
+  fail_if_simulated "first-tofu-apply"
 
   (
     cd "${INFRA_DIR}"
@@ -274,11 +454,11 @@ run_bootstrap_publish() {
   REMOTE_IMAGE_URI="${registry}/${ECR_REPOSITORY_NAME}:${IMAGE_TAG}"
   local_image_tag="${ECR_REPOSITORY_NAME}:${IMAGE_TAG}"
 
-  echo
-  echo "Publishing bootstrap image"
-  echo "Fixture dir: ${FIXTURE_DIR}"
-  echo "ECR repository: ${ECR_REPOSITORY_NAME}"
-  echo "Remote image URI: ${REMOTE_IMAGE_URI}"
+  log_step "bootstrap-image-publish" "Publishing bootstrap image"
+  note "Fixture dir: ${FIXTURE_DIR}"
+  note "ECR repository: ${ECR_REPOSITORY_NAME}"
+  note "Remote image URI: ${REMOTE_IMAGE_URI}"
+  fail_if_simulated "bootstrap-image-publish"
 
   aws ecr describe-repositories \
     --repository-names "${ECR_REPOSITORY_NAME}" \
@@ -301,6 +481,9 @@ fetch_service_url() {
   local service_url=""
   local tofu_error_log="${WORKDIR}/tofu-service-url.stderr.log"
   local aws_error_log="${WORKDIR}/aws-service-url.stderr.log"
+
+  log_step "url-fetch" "Resolving App Runner service URL"
+  fail_if_simulated "url-fetch"
 
   if service_url="$(
     cd "${INFRA_DIR}" && tofu output -raw service_url 2>"${tofu_error_log}"
@@ -352,11 +535,11 @@ run_second_apply() {
   require_materialized_value "TF_STATE_BUCKET" "${TF_STATE_BUCKET:-}"
   require_materialized_value "GITHUB_OWNER" "${GITHUB_OWNER:-}"
 
-  echo
-  echo "Running isolated second apply"
-  echo "Infra dir: ${INFRA_DIR}"
-  echo "Backend config: ${BACKEND_CONFIG_PATH}"
-  echo "Vars file: ${TFVARS_PATH}"
+  log_step "second-tofu-apply" "Running isolated second apply"
+  note "Infra dir: ${INFRA_DIR}"
+  note "Backend config: ${BACKEND_CONFIG_PATH}"
+  note "Vars file: ${TFVARS_PATH}"
+  fail_if_simulated "second-tofu-apply"
 
   (
     cd "${INFRA_DIR}"
@@ -382,11 +565,11 @@ run_verify() {
   service_url="$(fetch_service_url)"
   VERIFY_RESPONSE_PATH="${WORKDIR}/verify-response.json"
 
-  echo
-  echo "Verifying public fixture response"
-  echo "Service URL: ${service_url}"
-  echo "Verify path: ${verify_path}"
-  echo "Response capture: ${VERIFY_RESPONSE_PATH}"
+  log_step "verification" "Verifying public fixture response"
+  fail_if_simulated "verification"
+  note "Service URL: ${service_url}"
+  note "Verify path: ${verify_path}"
+  note "Response capture: ${VERIFY_RESPONSE_PATH}"
 
   python3 - "${service_url}" "${verify_path}" "${VERIFY_RESPONSE_PATH}" <<'PY'
 import json
@@ -454,13 +637,20 @@ print(f"Fixture verification passed: {target_url}")
 PY
 }
 
+run_full_sequence() {
+  run_foundation_apply
+  run_bootstrap_publish
+  run_second_apply
+  run_verify
+}
+
 main() {
   if [ "${MODE}" = "--help" ] || [ "${MODE}" = "-h" ]; then
     usage
     exit 0
   fi
 
-  if [ "${MODE}" != "plan" ] && [ "${MODE}" != "foundation-apply" ] && [ "${MODE}" != "bootstrap-publish" ] && [ "${MODE}" != "second-apply" ] && [ "${MODE}" != "verify" ]; then
+  if [ "${MODE}" != "plan" ] && [ "${MODE}" != "run" ] && [ "${MODE}" != "foundation-apply" ] && [ "${MODE}" != "bootstrap-publish" ] && [ "${MODE}" != "second-apply" ] && [ "${MODE}" != "verify" ]; then
     echo "Unsupported mode: ${MODE}" >&2
     usage >&2
     exit 1
@@ -471,13 +661,22 @@ main() {
   require_command jq
   require_command mktemp
 
-  trap cleanup EXIT
+  trap 'finalize_run $?' EXIT
 
   prepare_workdir
   materialize_tfvars
 
+  if [ "${MODE}" != "plan" ]; then
+    CLEANUP_REQUIRED=1
+  fi
+
   if [ "${MODE}" = "plan" ]; then
     print_plan
+    return
+  fi
+
+  if [ "${MODE}" = "run" ]; then
+    run_full_sequence
     return
   fi
 

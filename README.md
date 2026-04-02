@@ -105,7 +105,10 @@ At the moment this is a runner skeleton. It prepares isolated naming and temp
 configuration for a real-cloud integration run, and it can now perform the
 first isolated foundation apply, publish the bootstrap fixture image, and run
 the second apply to fetch the service URL and verify the public fixture
-response. The remaining TODO is reliable destroy/cleanup. See
+response. It also now traps failures in destructive modes and attempts an
+isolated `tofu destroy` with the same generated config, preserving the
+original failure while reporting cleanup failures separately. The remaining
+TODO is success-path destroy/cleanup. See
 [`docs/aws-integration.md`](docs/aws-integration.md) for the current scope and
 fixture contract.
 
