@@ -85,6 +85,12 @@ class WorkflowContractsTest(unittest.TestCase):
             block_lines = [line]
             i += 1
 
+            while i < len(lines) and brace_depth <= 0:
+                block_line = lines[i]
+                block_lines.append(block_line)
+                brace_depth += block_line.count("{") - block_line.count("}")
+                i += 1
+
             while i < len(lines) and brace_depth > 0:
                 block_line = lines[i]
                 block_lines.append(block_line)
