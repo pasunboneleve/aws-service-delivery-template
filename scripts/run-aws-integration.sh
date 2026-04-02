@@ -27,6 +27,7 @@ FIXTURE_DIR="${ROOT_DIR}/integration-fixture"
 REMOTE_IMAGE_URI=""
 VERIFY_RESPONSE_PATH=""
 CURRENT_STEP="startup"
+PRIMARY_FAILURE_STEP=""
 ORIGINAL_EXIT_CODE=0
 CLEANUP_REQUIRED=0
 CLEANUP_ATTEMPTED=0
@@ -35,6 +36,7 @@ CLEANUP_TIMEOUT_SECONDS="${AWS_INTEGRATION_CLEANUP_TIMEOUT_SECONDS:-300}"
 SIMULATED_FAILURE_STEPS="${AWS_INTEGRATION_SIMULATE_FAILURE_AT:-}"
 TOFU_DESTROY_LOG_PATH=""
 EXIT_CLEANUP_SKIPPED=98
+CLEANUP_STATUS_PATH=""
 
 usage() {
   cat <<'EOF'
@@ -95,10 +97,17 @@ fail_if_simulated() {
 }
 
 cleanup_workdir() {
+  local exit_code="${1:-0}"
+
   if [ "${WORKDIR_CREATED}" != "1" ]; then
     if [ -n "${WORKDIR}" ]; then
       echo "Leaving user-supplied integration workdir in place: ${WORKDIR}"
     fi
+    return
+  fi
+
+  if [ "${exit_code}" -ne 0 ]; then
+    echo "Preserving generated integration workdir after failure: ${WORKDIR}"
     return
   fi
 
@@ -211,13 +220,51 @@ EOF
   run_with_timeout "${CLEANUP_TIMEOUT_SECONDS}" "${TOFU_DESTROY_LOG_PATH}" bash "${cleanup_script}"
 }
 
+write_cleanup_summary() {
+  local cleanup_status="$1"
+
+  if [ -z "${WORKDIR}" ] || [ ! -d "${WORKDIR}" ]; then
+    return
+  fi
+
+  CLEANUP_STATUS_PATH="${WORKDIR}/cleanup-status.json"
+
+  jq -n \
+    --arg run_id "${RUN_ID}" \
+    --arg workdir "${WORKDIR}" \
+    --arg primary_failure_step "${PRIMARY_FAILURE_STEP}" \
+    --arg state_key "${STATE_KEY}" \
+    --arg tfvars_path "${TFVARS_PATH}" \
+    --arg backend_config_path "${BACKEND_CONFIG_PATH}" \
+    --arg destroy_log_path "${TOFU_DESTROY_LOG_PATH}" \
+    --arg cleanup_status "${cleanup_status}" \
+    --argjson exit_code "${ORIGINAL_EXIT_CODE}" \
+    --argjson cleanup_exit_code "${CLEANUP_EXIT_CODE}" \
+    --argjson cleanup_attempted "$([ "${CLEANUP_ATTEMPTED}" = "1" ] && printf 'true' || printf 'false')" \
+    '{
+      run_id: $run_id,
+      workdir: $workdir,
+      primary_step: $primary_failure_step,
+      primary_exit_code: $exit_code,
+      cleanup_attempted: $cleanup_attempted,
+      cleanup_status: $cleanup_status,
+      cleanup_exit_code: $cleanup_exit_code,
+      state_key: $state_key,
+      tfvars_path: $tfvars_path,
+      backend_config_path: $backend_config_path,
+      destroy_log_path: $destroy_log_path
+    }' > "${CLEANUP_STATUS_PATH}"
+}
+
 finalize_run() {
   local exit_code="$1"
+  local cleanup_status="not-needed"
 
   trap - EXIT
   set +e
 
   if [ "${exit_code}" -ne 0 ]; then
+    PRIMARY_FAILURE_STEP="${CURRENT_STEP}"
     echo "Integration runner failed during step '${CURRENT_STEP}' with exit code ${exit_code}." >&2
     ORIGINAL_EXIT_CODE="${exit_code}"
 
@@ -225,19 +272,27 @@ finalize_run() {
       attempt_cleanup_destroy
       CLEANUP_EXIT_CODE=$?
       if [ "${CLEANUP_EXIT_CODE}" -eq 0 ]; then
+        cleanup_status="succeeded"
         echo "Cleanup succeeded during step 'destroy'." >&2
       elif [ "${CLEANUP_EXIT_CODE}" -eq "${EXIT_CLEANUP_SKIPPED}" ]; then
+        cleanup_status="skipped"
         echo "Cleanup skipped during step 'destroy' because required integration inputs were not materialized." >&2
       else
+        cleanup_status="failed"
         echo "Cleanup also failed during step 'destroy' with exit code ${CLEANUP_EXIT_CODE}." >&2
         if [ -n "${TOFU_DESTROY_LOG_PATH}" ] && [ -f "${TOFU_DESTROY_LOG_PATH}" ]; then
           echo "Cleanup logs saved to ${TOFU_DESTROY_LOG_PATH}" >&2
         fi
       fi
     fi
+
+    write_cleanup_summary "${cleanup_status}"
+    if [ -n "${CLEANUP_STATUS_PATH}" ] && [ -f "${CLEANUP_STATUS_PATH}" ]; then
+      echo "Cleanup summary saved to ${CLEANUP_STATUS_PATH}" >&2
+    fi
   fi
 
-  cleanup_workdir
+  cleanup_workdir "${exit_code}"
 
   exit "${exit_code}"
 }

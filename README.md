@@ -110,7 +110,8 @@ isolated `tofu destroy` with the same generated config, preserving the
 original failure while reporting cleanup failures separately. The remaining
 TODO is success-path destroy/cleanup. See
 [`docs/aws-integration.md`](docs/aws-integration.md) for the current scope and
-fixture contract.
+fixture contract. Failed runs now keep their generated integration workdir so
+cleanup logs and `cleanup-status.json` remain available for inspection.
 
 Bootstrapping a new project
 ---------------------------

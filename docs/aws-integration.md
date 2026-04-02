@@ -83,6 +83,10 @@ Failure handling behavior:
 - if cleanup also fails, that is reported as a secondary failure and does not
   mask the original exit
 - cleanup destroy is bounded by `AWS_INTEGRATION_CLEANUP_TIMEOUT_SECONDS`
+- generated integration workdirs are preserved after failures so cleanup logs
+  and metadata remain available for inspection
+- cleanup outcomes are written to `cleanup-status.json` in the integration
+  workdir
 
 To run the first real foundation apply, you must provide:
 
@@ -128,6 +132,7 @@ That is useful for validating that:
 - cleanup destroy is still attempted
 - cleanup skip and cleanup success are clearly distinguished from cleanup
   failure
+- generated workdirs and cleanup metadata remain available after failures
 - destroy failures are reported as secondary failures
 
 To publish the bootstrap image, you must provide:
