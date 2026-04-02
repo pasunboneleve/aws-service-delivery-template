@@ -18,12 +18,9 @@ class WorkflowContractsTest(unittest.TestCase):
 
     def test_workflow_variables_are_managed_in_terraform(self) -> None:
         variable_refs = set(re.findall(r"vars\.([A-Z0-9_]+)", self.workflow_text))
-        managed_variables = set(
-            re.findall(
-                r'resource\s+"github_actions_variable"\s+"[^"]+"\s*\{[^}]*?variable_name\s*=\s*"([^"]+)"',
-                self.github_secrets_text,
-                flags=re.DOTALL,
-            )
+        managed_variables = self._github_resource_names(
+            resource_type="github_actions_variable",
+            field_name="variable_name",
         )
 
         self.assertTrue(variable_refs, "expected workflow to reference GitHub Actions variables")
@@ -31,12 +28,9 @@ class WorkflowContractsTest(unittest.TestCase):
 
     def test_workflow_secrets_are_managed_in_terraform(self) -> None:
         secret_refs = set(re.findall(r"secrets\.([A-Z0-9_]+)", self.workflow_text))
-        managed_secrets = set(
-            re.findall(
-                r'resource\s+"github_actions_secret"\s+"[^"]+"\s*\{[^}]*?secret_name\s*=\s*"([^"]+)"',
-                self.github_secrets_text,
-                flags=re.DOTALL,
-            )
+        managed_secrets = self._github_resource_names(
+            resource_type="github_actions_secret",
+            field_name="secret_name",
         )
 
         self.assertTrue(secret_refs, "expected workflow to reference GitHub Actions secrets")
@@ -74,6 +68,35 @@ class WorkflowContractsTest(unittest.TestCase):
             "does not exist. Run tofu apply after the bootstrap image is available.",
             self.workflow_text,
         )
+
+    def _github_resource_names(self, resource_type: str, field_name: str) -> set[str]:
+        names: set[str] = set()
+        resource_start = f'resource "{resource_type}" '
+        lines = self.github_secrets_text.splitlines()
+        i = 0
+
+        while i < len(lines):
+            line = lines[i]
+            if resource_start not in line:
+                i += 1
+                continue
+
+            brace_depth = line.count("{") - line.count("}")
+            block_lines = [line]
+            i += 1
+
+            while i < len(lines) and brace_depth > 0:
+                block_line = lines[i]
+                block_lines.append(block_line)
+                brace_depth += block_line.count("{") - block_line.count("}")
+                i += 1
+
+            block_text = "\n".join(block_lines)
+            match = re.search(rf'{field_name}\s*=\s*"([^"]+)"', block_text)
+            if match:
+                names.add(match.group(1))
+
+        return names
 
 
 if __name__ == "__main__":
