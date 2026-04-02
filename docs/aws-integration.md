@@ -10,8 +10,25 @@ Current status:
 
 - the runner is a skeleton
 - it prepares isolated naming and temp workspace state
-- it writes an isolated integration tfvars file
+- it writes isolated integration files:
+  - `integration.tfvars`
+  - `backend.hcl`
+  - `integration-metadata.json`
 - it prints the intended command sequence for the real integration flow
+
+Current naming strategy:
+
+- `integration_prefix`
+  derived from `<repo-name>-<run-id>` and slugified
+- `service_name`
+  trimmed from the prefix to stay within the current App Runner naming budget
+- `ecr_repository_name`
+  currently matches `service_name`, which mirrors the template's Terraform
+  shape
+- `state_key`
+  uses `<repo-name>/integration/<run-id>.tfstate`
+- `image_tag`
+  uses `integration-<run-id>`
 
 Current TODO boundaries:
 
@@ -32,3 +49,5 @@ Environment variables used by the skeleton:
 
 The runner intentionally does not mutate `infra/prod.tfvars`.
 It creates isolated integration config in a temporary working directory.
+If you provide `AWS_INTEGRATION_WORKDIR`, that directory is reused and left in
+place on exit.
