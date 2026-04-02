@@ -11,6 +11,7 @@ REPO_NAME="$(basename "${ROOT_DIR}")"
 RUN_ID_DEFAULT="$(date +%Y%m%d%H%M%S)-$$"
 RUN_ID_RAW="${AWS_INTEGRATION_RUN_ID:-${RUN_ID_DEFAULT}}"
 RUN_ID="$(printf '%s' "${RUN_ID_RAW}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9-' '-')"
+RUN_ID_EXPLICIT=0
 WORKDIR="${AWS_INTEGRATION_WORKDIR:-}"
 KEEP_WORKDIR="${AWS_INTEGRATION_KEEP_WORKDIR:-0}"
 MODE="${1:-plan}"
@@ -41,7 +42,7 @@ CLEANUP_STATUS_PATH=""
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/run-aws-integration.sh [plan|run|foundation-apply|bootstrap-publish|second-apply|verify]
+  ./scripts/run-aws-integration.sh [plan|run|foundation-apply|bootstrap-publish|second-apply|verify|destroy]
 
 This is the Phase 2 AWS integration runner skeleton.
 Current behavior:
@@ -54,6 +55,7 @@ Current behavior:
   - optionally builds and pushes the bootstrap fixture image
   - optionally performs the second apply and fetches the service URL
   - optionally verifies the public fixture response
+  - optionally destroys isolated integration resources explicitly
 
 Environment overrides:
   AWS_INTEGRATION_RUN_ID       Override the generated run id
@@ -75,12 +77,12 @@ EOF
 
 log_step() {
   CURRENT_STEP="$1"
-  echo
-  echo "==> [${CURRENT_STEP}] $2"
+  echo >&2
+  echo "==> [${CURRENT_STEP}] $2" >&2
 }
 
 note() {
-  echo "-- ${CURRENT_STEP}: $1"
+  echo "-- ${CURRENT_STEP}: $1" >&2
 }
 
 fail_if_simulated() {
@@ -420,6 +422,64 @@ Expected bootstrap image tag: ${IMAGE_TAG}
 EOF
 }
 
+run_destroy() {
+  local auto_approve="${AWS_INTEGRATION_AUTO_APPROVE:-1}"
+  local destroy_reason="$1"
+  local destroy_script=""
+
+  require_materialized_value "AWS_REGION" "${AWS_REGION:-}"
+  require_materialized_value "TF_STATE_BUCKET" "${TF_STATE_BUCKET:-}"
+  require_materialized_value "GITHUB_OWNER" "${GITHUB_OWNER:-}"
+
+  log_step "destroy" "Running isolated destroy (${destroy_reason})"
+  note "Run id: ${RUN_ID}"
+  note "Infra dir: ${INFRA_DIR}"
+  note "Backend config: ${BACKEND_CONFIG_PATH}"
+  note "Vars file: ${TFVARS_PATH}"
+
+  if [ "${destroy_reason}" = "manual" ] && [ "${RUN_ID_EXPLICIT}" != "1" ]; then
+    echo "Manual destroy requires an explicit AWS_INTEGRATION_RUN_ID so the runner does not guess which isolated stack to tear down." >&2
+    exit 1
+  fi
+
+  if printf ',%s,' "${SIMULATED_FAILURE_STEPS}" | grep -Fq ',destroy,'; then
+    echo "Simulated failure at step destroy" >&2
+    exit 97
+  fi
+
+  TOFU_DESTROY_LOG_PATH="${WORKDIR}/destroy.log"
+  destroy_script="${WORKDIR}/destroy.sh"
+  {
+    echo "Destroy run id: ${RUN_ID}"
+    echo "Destroy reason: ${destroy_reason}"
+    echo "Destroy timeout seconds: ${CLEANUP_TIMEOUT_SECONDS}"
+    echo "Backend config: ${BACKEND_CONFIG_PATH}"
+    echo "Vars file: ${TFVARS_PATH}"
+  } > "${TOFU_DESTROY_LOG_PATH}"
+
+  cat > "${destroy_script}" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+cd "${INFRA_DIR}"
+tofu init -backend-config="${BACKEND_CONFIG_PATH}"
+EOF
+
+  if [ "${auto_approve}" = "0" ]; then
+    cat >> "${destroy_script}" <<EOF
+tofu destroy -var-file="${TFVARS_PATH}"
+EOF
+  else
+    cat >> "${destroy_script}" <<EOF
+tofu destroy -auto-approve -var-file="${TFVARS_PATH}"
+EOF
+  fi
+
+  chmod +x "${destroy_script}"
+  run_with_timeout "${CLEANUP_TIMEOUT_SECONDS}" "${TOFU_DESTROY_LOG_PATH}" bash "${destroy_script}"
+
+  note "Destroy log: ${TOFU_DESTROY_LOG_PATH}"
+}
+
 print_plan() {
   cat <<EOF
 
@@ -444,19 +504,23 @@ Planned AWS integration sequence
    ./scripts/run-aws-integration.sh verify
 
 6. Destroy the isolated integration stack and remove temp artifacts:
-   tofu destroy -var-file="${TFVARS_PATH}"
-   The runner now attempts this automatically on failure, bounded by a timeout.
+   The runner now destroys automatically at the end of a successful run.
+   It also attempts destroy automatically on failure, bounded by a timeout.
+
+7. Manually destroy a prior run by reusing the same isolated run id:
+   AWS_INTEGRATION_RUN_ID=<previous-run-id> ./scripts/run-aws-integration.sh destroy
 
 Current boundary:
 - The run mode now preserves the original failing exit code.
 - It reports destroy failures as secondary cleanup failures.
 - It now attempts isolated cleanup destroy from an EXIT trap when a
   destructive step fails.
+- It now destroys automatically at the end of a successful run.
+- It now supports an explicit destroy mode for prior runs.
 - This runner now supports the isolated foundation apply.
 - It now supports publishing the bootstrap fixture image.
 - It now supports the second apply and service URL fetch.
 - It now supports public fixture-response verification.
-- Success-path destroy remains manual for now.
 EOF
 }
 
@@ -702,17 +766,27 @@ run_full_sequence() {
   run_bootstrap_publish
   run_second_apply
   run_verify
+  run_destroy "success"
 }
 
 main() {
+  if [ -n "${AWS_INTEGRATION_RUN_ID:-}" ]; then
+    RUN_ID_EXPLICIT=1
+  fi
+
   if [ "${MODE}" = "--help" ] || [ "${MODE}" = "-h" ]; then
     usage
     exit 0
   fi
 
-  if [ "${MODE}" != "plan" ] && [ "${MODE}" != "run" ] && [ "${MODE}" != "foundation-apply" ] && [ "${MODE}" != "bootstrap-publish" ] && [ "${MODE}" != "second-apply" ] && [ "${MODE}" != "verify" ]; then
+  if [ "${MODE}" != "plan" ] && [ "${MODE}" != "run" ] && [ "${MODE}" != "foundation-apply" ] && [ "${MODE}" != "bootstrap-publish" ] && [ "${MODE}" != "second-apply" ] && [ "${MODE}" != "verify" ] && [ "${MODE}" != "destroy" ]; then
     echo "Unsupported mode: ${MODE}" >&2
     usage >&2
+    exit 1
+  fi
+
+  if [ "${MODE}" = "destroy" ] && [ "${RUN_ID_EXPLICIT}" != "1" ]; then
+    echo "Destroy mode requires AWS_INTEGRATION_RUN_ID so the runner does not guess which isolated stack to tear down." >&2
     exit 1
   fi
 
@@ -752,6 +826,11 @@ main() {
 
   if [ "${MODE}" = "second-apply" ]; then
     run_second_apply
+    return
+  fi
+
+  if [ "${MODE}" = "destroy" ]; then
+    run_destroy "manual"
     return
   fi
 

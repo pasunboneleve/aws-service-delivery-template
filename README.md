@@ -116,10 +116,12 @@ The Phase 2 runner can currently:
 - publish the bootstrap fixture image to ECR
 - run the second apply and fetch the App Runner service URL
 - verify the public fixture response
+- destroy the isolated stack automatically at the end of a successful run
+- destroy a prior isolated run explicitly with `destroy`
 - attempt failure cleanup with the same isolated config if a destructive step
   fails
 
-The remaining TODO is success-path destroy/manual destroy. See
+The remaining TODO is scheduled/nightly execution, not destroy plumbing. See
 [`docs/aws-integration.md`](docs/aws-integration.md) for the exact command
 surface, required tools, credentials, and current boundaries.
 
@@ -171,14 +173,27 @@ Current behavior of `run`:
 - applies again to create/update App Runner
 - fetches the service URL
 - verifies the public fixture response
+- destroys the isolated stack on success
 - if a destructive step fails, attempts cleanup destroy automatically
 
 Current limitations:
 
-- success-path destroy is not implemented yet
-- explicit manual destroy mode is not implemented yet
 - failed runs preserve their workdir intentionally for cleanup inspection
 - cleanup outcomes are recorded in `cleanup-status.json`
+- scheduled/nightly execution is not implemented yet
+
+To manually destroy a prior isolated run:
+
+```bash
+AWS_REGION=ap-southeast-2 \
+TF_STATE_BUCKET=your-tf-state-bucket \
+GITHUB_OWNER=your-github-owner \
+AWS_INTEGRATION_RUN_ID=<previous-run-id> \
+./scripts/run-aws-integration.sh destroy
+```
+
+The explicit `AWS_INTEGRATION_RUN_ID` requirement is intentional. It prevents
+the runner from guessing which isolated stack to tear down.
 
 Bootstrapping a new project
 ---------------------------

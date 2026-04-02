@@ -41,8 +41,10 @@ Required for the real AWS lane:
 
 Current boundary:
 - `run` covers apply, bootstrap image publish, URL fetch, verification, and
-  failure cleanup
-- success-path destroy and explicit manual destroy are still follow-up work
+  success-path destroy
+- failure cleanup still runs from the trap path when destructive steps fail
+- explicit manual teardown is available through:
+  `AWS_INTEGRATION_RUN_ID=<previous-run-id> ./scripts/run-aws-integration.sh destroy`
 
 ### AWS Deployment Commands
 Set required environment variables first:

@@ -9,6 +9,7 @@ This document describes the Phase 2 AWS integration lane entrypoint:
 ./scripts/run-aws-integration.sh bootstrap-publish
 ./scripts/run-aws-integration.sh second-apply
 ./scripts/run-aws-integration.sh verify
+./scripts/run-aws-integration.sh destroy
 ```
 
 Use this document for the real-cloud Phase 2 lane only.
@@ -32,6 +33,8 @@ Current status:
 - it can build and push the bootstrap fixture image to ECR
 - it can run the second isolated apply and fetch the service URL
 - it can verify the public fixture response at the service URL
+- it can destroy isolated integration resources automatically on success
+- it can destroy a prior isolated run explicitly
 
 Required local tools:
 
@@ -65,7 +68,7 @@ Current naming strategy:
 
 Current TODO boundary:
 
-- success-path destroy remains a separate follow-up
+- scheduled/nightly execution remains a separate follow-up
 
 Current command surface:
 
@@ -81,6 +84,8 @@ Current command surface:
   run the second isolated apply and resolve the service URL
 - `./scripts/run-aws-integration.sh verify`
   verify the public fixture response contract
+- `./scripts/run-aws-integration.sh destroy`
+  manually tear down a prior isolated run using the same run id/config inputs
 
 Environment variables used by the skeleton:
 
@@ -113,6 +118,8 @@ Failure handling behavior:
 - if a destructive mode fails after isolated config is materialized, an `EXIT`
   trap attempts `tofu destroy` using the same generated `backend.hcl`,
   `integration.tfvars`, and run id
+- successful `run` executions now destroy the isolated integration stack at the
+  end of the sequence
 - the original failing step and exit code are preserved and reported first
 - if cleanup succeeds, that is reported explicitly
 - if cleanup is skipped because required isolated inputs were never
@@ -155,6 +162,15 @@ TF_STATE_BUCKET=your-state-bucket \
 GITHUB_OWNER=your-github-owner \
 ./scripts/run-aws-integration.sh run
 ```
+
+The `run` mode now performs the full flow and then tears the isolated stack
+down on success:
+
+- first apply
+- bootstrap image publish
+- second apply
+- service URL verification
+- success-path destroy
 
 For local failure-path testing without real cloud calls, you can inject a
 simulated failure:
@@ -245,3 +261,27 @@ The runner fails clearly on:
 
 The verified response body is saved in the integration workdir as
 `verify-response.json`.
+
+To manually destroy a prior run, you must provide:
+
+- `AWS_REGION`
+- `TF_STATE_BUCKET`
+- `GITHUB_OWNER`
+- `AWS_INTEGRATION_RUN_ID`
+
+Then run:
+
+```bash
+AWS_REGION=ap-southeast-2 \
+TF_STATE_BUCKET=your-state-bucket \
+GITHUB_OWNER=your-github-owner \
+AWS_INTEGRATION_RUN_ID=20260402173502-24 \
+./scripts/run-aws-integration.sh destroy
+```
+
+The explicit run id is required so the runner does not guess which isolated
+stack to destroy. For failed runs, you can obtain the run id from:
+
+- the runner output
+- the preserved integration workdir name
+- `cleanup-status.json`
