@@ -33,3 +33,7 @@ infra/*.auto.tfvars
 
 # Logs
 *.log
+
+# Python
+
+**/__pycache__/
