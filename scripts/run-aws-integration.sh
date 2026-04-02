@@ -5,10 +5,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INFRA_DIR="${ROOT_DIR}/infra"
 REPO_NAME="$(basename "${ROOT_DIR}")"
 RUN_ID_DEFAULT="$(date +%Y%m%d%H%M%S)-$$"
-RUN_ID="${AWS_INTEGRATION_RUN_ID:-${RUN_ID_DEFAULT}}"
+RUN_ID_RAW="${AWS_INTEGRATION_RUN_ID:-${RUN_ID_DEFAULT}}"
+RUN_ID="$(printf '%s' "${RUN_ID_RAW}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9-' '-')"
 WORKDIR="${AWS_INTEGRATION_WORKDIR:-}"
 KEEP_WORKDIR="${AWS_INTEGRATION_KEEP_WORKDIR:-0}"
 MODE="${1:-plan}"
+WORKDIR_CREATED=0
 
 usage() {
   cat <<'EOF'
@@ -30,6 +32,13 @@ EOF
 }
 
 cleanup() {
+  if [ "${WORKDIR_CREATED}" != "1" ]; then
+    if [ -n "${WORKDIR}" ]; then
+      echo "Leaving user-supplied integration workdir in place: ${WORKDIR}"
+    fi
+    return
+  fi
+
   if [ "${KEEP_WORKDIR}" = "1" ]; then
     echo "Keeping integration workdir: ${WORKDIR}"
     return
@@ -60,6 +69,7 @@ prepare_workdir() {
     mkdir -p "${WORKDIR}"
   else
     WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/${REPO_NAME}-${RUN_ID}-XXXXXX")"
+    WORKDIR_CREATED=1
   fi
 }
 
