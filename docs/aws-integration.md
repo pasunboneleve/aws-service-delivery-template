@@ -5,6 +5,7 @@ This document describes the Phase 2 AWS integration lane entrypoint:
 ```bash
 ./scripts/run-aws-integration.sh
 ./scripts/run-aws-integration.sh foundation-apply
+./scripts/run-aws-integration.sh bootstrap-publish
 ```
 
 Current status:
@@ -17,6 +18,7 @@ Current status:
   - `integration-metadata.json`
 - it prints the intended command sequence for the real integration flow
 - it can run the first isolated `tofu init` + `tofu apply` for foundation resources
+- it can build and push the bootstrap fixture image to ECR
 
 Current naming strategy:
 
@@ -34,7 +36,6 @@ Current naming strategy:
 
 Current TODO boundaries:
 
-- publishing a bootstrap image to ECR
 - performing the second `tofu apply`
 - fetching and verifying the public App Runner URL
 - reliable destroy on partial failures
@@ -73,3 +74,22 @@ If you want an interactive `tofu apply`, set:
 ```bash
 AWS_INTEGRATION_AUTO_APPROVE=0
 ```
+
+To publish the bootstrap image, you must provide:
+
+- `AWS_REGION`
+- working AWS credentials usable with:
+  - `aws sts get-caller-identity`
+  - `aws ecr describe-repositories`
+  - `aws ecr get-login-password`
+- Docker daemon access
+
+Then run:
+
+```bash
+AWS_REGION=ap-southeast-2 \
+./scripts/run-aws-integration.sh bootstrap-publish
+```
+
+The runner uses the repo-local fixture in `integration-fixture/` and pushes the
+derived integration tag to the isolated ECR repository name.

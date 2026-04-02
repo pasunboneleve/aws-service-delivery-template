@@ -19,11 +19,13 @@ STATE_KEY=""
 TFVARS_PATH=""
 BACKEND_CONFIG_PATH=""
 METADATA_PATH=""
+FIXTURE_DIR="${ROOT_DIR}/integration-fixture"
+REMOTE_IMAGE_URI=""
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/run-aws-integration.sh [plan|foundation-apply]
+  ./scripts/run-aws-integration.sh [plan|foundation-apply|bootstrap-publish]
 
 This is the Phase 2 AWS integration runner skeleton.
 Current behavior:
@@ -32,12 +34,15 @@ Current behavior:
   - materializes isolated backend, tfvars, and metadata files
   - prints the intended command sequence and current TODO boundaries
   - optionally performs the first foundation apply
+  - optionally builds and pushes the bootstrap fixture image
 
 Environment overrides:
   AWS_INTEGRATION_RUN_ID       Override the generated run id
   AWS_INTEGRATION_WORKDIR      Reuse a specific working directory
   AWS_INTEGRATION_KEEP_WORKDIR Keep the workdir after exit when set to 1
   AWS_INTEGRATION_AUTO_APPROVE Set to 0 to omit -auto-approve on apply
+  AWS_INTEGRATION_AWS_ACCOUNT_ID
+                               Override the AWS account id instead of querying STS
 EOF
 }
 
@@ -190,7 +195,7 @@ Planned AWS integration sequence
    tofu apply -var-file="${TFVARS_PATH}"
 
 3. Publish the bootstrap image to ECR repository ${ECR_REPOSITORY_NAME} using tag ${IMAGE_TAG}.
-   TODO: wire this to a known fixture image and explicit Docker/ECR auth checks.
+   ./scripts/run-aws-integration.sh bootstrap-publish
 
 4. Run the second apply so Terraform can create the App Runner service:
    tofu apply -var-file="${TFVARS_PATH}"
@@ -204,8 +209,9 @@ Planned AWS integration sequence
 
 Current boundary:
 - This runner now supports the isolated foundation apply.
-- It still does not publish the bootstrap image, create the runtime service on a
-  second apply, verify the public URL, or destroy integration infrastructure.
+- It now supports publishing the bootstrap fixture image.
+- It still does not create the runtime service on a second apply, verify the
+  public URL, or destroy integration infrastructure.
 EOF
 }
 
@@ -234,13 +240,64 @@ run_foundation_apply() {
   )
 }
 
+run_bootstrap_publish() {
+  local aws_account_id="${AWS_INTEGRATION_AWS_ACCOUNT_ID:-}"
+  local registry=""
+  local local_image_tag=""
+
+  require_materialized_value "AWS_REGION" "${AWS_REGION:-}"
+  require_command aws
+  require_command docker
+
+  if [ ! -f "${FIXTURE_DIR}/Dockerfile" ] || [ ! -f "${FIXTURE_DIR}/server.py" ]; then
+    echo "Integration fixture is missing from ${FIXTURE_DIR}" >&2
+    exit 1
+  fi
+
+  if [ -z "${aws_account_id}" ]; then
+    aws_account_id="$(
+      aws sts get-caller-identity \
+        --query Account \
+        --output text
+    )"
+  fi
+
+  require_materialized_value "AWS account id" "${aws_account_id}"
+
+  registry="${aws_account_id}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+  REMOTE_IMAGE_URI="${registry}/${ECR_REPOSITORY_NAME}:${IMAGE_TAG}"
+  local_image_tag="${ECR_REPOSITORY_NAME}:${IMAGE_TAG}"
+
+  echo
+  echo "Publishing bootstrap image"
+  echo "Fixture dir: ${FIXTURE_DIR}"
+  echo "ECR repository: ${ECR_REPOSITORY_NAME}"
+  echo "Remote image URI: ${REMOTE_IMAGE_URI}"
+
+  aws ecr describe-repositories \
+    --repository-names "${ECR_REPOSITORY_NAME}" \
+    --region "${AWS_REGION}" >/dev/null
+
+  aws ecr get-login-password --region "${AWS_REGION}" \
+    | docker login \
+        --username AWS \
+        --password-stdin "${registry}"
+
+  docker build \
+    -t "${local_image_tag}" \
+    "${FIXTURE_DIR}"
+
+  docker tag "${local_image_tag}" "${REMOTE_IMAGE_URI}"
+  docker push "${REMOTE_IMAGE_URI}"
+}
+
 main() {
   if [ "${MODE}" = "--help" ] || [ "${MODE}" = "-h" ]; then
     usage
     exit 0
   fi
 
-  if [ "${MODE}" != "plan" ] && [ "${MODE}" != "foundation-apply" ]; then
+  if [ "${MODE}" != "plan" ] && [ "${MODE}" != "foundation-apply" ] && [ "${MODE}" != "bootstrap-publish" ]; then
     echo "Unsupported mode: ${MODE}" >&2
     usage >&2
     exit 1
@@ -261,7 +318,12 @@ main() {
     return
   fi
 
-  run_foundation_apply
+  if [ "${MODE}" = "foundation-apply" ]; then
+    run_foundation_apply
+    return
+  fi
+
+  run_bootstrap_publish
 }
 
 main "$@"
