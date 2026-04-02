@@ -5,6 +5,7 @@
 - [direnv](https://direnv.net/)
 - [OpenTofu](https://opentofu.org/) or Terraform
 - [AWS CLI](https://docs.aws.amazon.com/cli/)
+- [Python 3](https://www.python.org/)
 
 ### Set environment variables
 
@@ -58,3 +59,14 @@ If the ECR repository is still empty on the first `tofu apply`, Terraform will s
 tofu apply
 ../scripts/update-readme-live-url.sh
 ```
+
+### Local verification
+
+Run the cheap local verification command before pushing template changes:
+
+```bash
+./scripts/verify-template-locally.sh
+```
+
+It runs Terraform checks, the repository contract tests, and optional
+`shellcheck` and `actionlint` if they are available locally.

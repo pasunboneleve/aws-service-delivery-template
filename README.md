@@ -79,6 +79,19 @@ Repository structure
 - `scripts/update-readme-live-url.sh`
   Updates the live URL block in the README from `tofu output`.
 
+Local verification
+------------------
+
+Run:
+
+```bash
+./scripts/verify-template-locally.sh
+```
+
+This is the cheap local assurance command for the template. It checks Terraform
+validity, contract tests under `tests/`, and optional shell and workflow
+linters when they are installed locally.
+
 Bootstrapping a new project
 ---------------------------
 

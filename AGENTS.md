@@ -17,6 +17,12 @@ For full workflow details: `bd prime`
 
 ## Common Development Commands
 
+### Local Verification
+Run the standard cheap assurance check:
+```bash
+./scripts/verify-template-locally.sh
+```
+
 ### AWS Deployment Commands
 Set required environment variables first:
 ```bash
