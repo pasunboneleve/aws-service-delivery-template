@@ -23,7 +23,7 @@ METADATA_PATH=""
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/run-aws-integration.sh [plan]
+  ./scripts/run-aws-integration.sh [plan|foundation-apply]
 
 This is the Phase 2 AWS integration runner skeleton.
 Current behavior:
@@ -31,11 +31,13 @@ Current behavior:
   - derives unique naming and state paths for an integration run
   - materializes isolated backend, tfvars, and metadata files
   - prints the intended command sequence and current TODO boundaries
+  - optionally performs the first foundation apply
 
 Environment overrides:
   AWS_INTEGRATION_RUN_ID       Override the generated run id
   AWS_INTEGRATION_WORKDIR      Reuse a specific working directory
   AWS_INTEGRATION_KEEP_WORKDIR Keep the workdir after exit when set to 1
+  AWS_INTEGRATION_AUTO_APPROVE Set to 0 to omit -auto-approve on apply
 EOF
 }
 
@@ -71,6 +73,16 @@ validate_optional_env() {
 
   if [ -n "${env_value}" ] && ! printf '%s' "${env_value}" | grep -Eq "${env_pattern}"; then
     echo "Invalid value for ${env_name}: ${env_value}" >&2
+    exit 1
+  fi
+}
+
+require_materialized_value() {
+  local field_name="$1"
+  local field_value="$2"
+
+  if [ -z "${field_value}" ] || printf '%s' "${field_value}" | grep -q '^__SET_'; then
+    echo "Missing required integration input: ${field_name}" >&2
     exit 1
   fi
 }
@@ -196,13 +208,38 @@ Current boundary:
 EOF
 }
 
+run_foundation_apply() {
+  local auto_approve="${AWS_INTEGRATION_AUTO_APPROVE:-1}"
+
+  require_materialized_value "AWS_REGION" "${AWS_REGION:-}"
+  require_materialized_value "TF_STATE_BUCKET" "${TF_STATE_BUCKET:-}"
+  require_materialized_value "GITHUB_OWNER" "${GITHUB_OWNER:-}"
+
+  echo
+  echo "Running isolated foundation apply"
+  echo "Infra dir: ${INFRA_DIR}"
+  echo "Backend config: ${BACKEND_CONFIG_PATH}"
+  echo "Vars file: ${TFVARS_PATH}"
+
+  (
+    cd "${INFRA_DIR}"
+    tofu init -backend-config="${BACKEND_CONFIG_PATH}"
+
+    if [ "${auto_approve}" = "0" ]; then
+      tofu apply -var-file="${TFVARS_PATH}"
+    else
+      tofu apply -auto-approve -var-file="${TFVARS_PATH}"
+    fi
+  )
+}
+
 main() {
   if [ "${MODE}" = "--help" ] || [ "${MODE}" = "-h" ]; then
     usage
     exit 0
   fi
 
-  if [ "${MODE}" != "plan" ]; then
+  if [ "${MODE}" != "plan" ] && [ "${MODE}" != "foundation-apply" ]; then
     echo "Unsupported mode: ${MODE}" >&2
     usage >&2
     exit 1
@@ -217,7 +254,13 @@ main() {
 
   prepare_workdir
   materialize_tfvars
-  print_plan
+
+  if [ "${MODE}" = "plan" ]; then
+    print_plan
+    return
+  fi
+
+  run_foundation_apply
 }
 
 main "$@"
