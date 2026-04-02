@@ -25,8 +25,8 @@ run_optional() {
 require_command tofu
 require_command python3
 
-echo "==> tofu fmt -recursive"
-(cd "${INFRA_DIR}" && tofu fmt -recursive)
+echo "==> tofu fmt -recursive -check"
+(cd "${INFRA_DIR}" && tofu fmt -recursive -check)
 
 echo "==> tofu init -backend=false"
 (cd "${INFRA_DIR}" && tofu init -backend=false)
