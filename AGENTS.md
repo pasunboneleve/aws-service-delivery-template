@@ -23,12 +23,26 @@ Run the standard cheap assurance check:
 ./scripts/verify-template-locally.sh
 ```
 
-### AWS Integration Skeleton
-Use the Phase 2 runner skeleton to inspect isolated naming and command
-sequencing for a real AWS integration run:
+This is the Phase 1 local lane. It does not require real AWS calls.
+
+### AWS Integration
+Use the Phase 2 runner to inspect or execute the real AWS integration lane:
 ```bash
 ./scripts/run-aws-integration.sh
+./scripts/run-aws-integration.sh run
 ```
+
+Required for the real AWS lane:
+- `AWS_REGION`
+- `TF_STATE_BUCKET`
+- `GITHUB_OWNER`
+- usable AWS credentials
+- local `aws`, `docker`, `tofu`, `jq`, `git`, and `python3`
+
+Current boundary:
+- `run` covers apply, bootstrap image publish, URL fetch, verification, and
+  failure cleanup
+- success-path destroy and explicit manual destroy are still follow-up work
 
 ### AWS Deployment Commands
 Set required environment variables first:

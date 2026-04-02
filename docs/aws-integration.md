@@ -11,6 +11,13 @@ This document describes the Phase 2 AWS integration lane entrypoint:
 ./scripts/run-aws-integration.sh verify
 ```
 
+Use this document for the real-cloud Phase 2 lane only.
+For the cheap local Phase 1 contract checks, use:
+
+```bash
+./scripts/verify-template-locally.sh
+```
+
 Current status:
 
 - the runner is a skeleton
@@ -25,6 +32,22 @@ Current status:
 - it can build and push the bootstrap fixture image to ECR
 - it can run the second isolated apply and fetch the service URL
 - it can verify the public fixture response at the service URL
+
+Required local tools:
+
+- `tofu`
+- `aws`
+- `docker`
+- `jq`
+- `git`
+- `python3`
+
+Required environment for real AWS runs:
+
+- `AWS_REGION`
+- `TF_STATE_BUCKET`
+- `GITHUB_OWNER`
+- usable AWS credentials, for example via `AWS_PROFILE`
 
 Current naming strategy:
 
@@ -43,6 +66,21 @@ Current naming strategy:
 Current TODO boundary:
 
 - success-path destroy remains a separate follow-up
+
+Current command surface:
+
+- `./scripts/run-aws-integration.sh`
+  print the current plan and generated isolated naming
+- `./scripts/run-aws-integration.sh run`
+  execute the current on-demand AWS integration flow
+- `./scripts/run-aws-integration.sh foundation-apply`
+  run only the first isolated apply
+- `./scripts/run-aws-integration.sh bootstrap-publish`
+  push the integration fixture image to ECR
+- `./scripts/run-aws-integration.sh second-apply`
+  run the second isolated apply and resolve the service URL
+- `./scripts/run-aws-integration.sh verify`
+  verify the public fixture response contract
 
 Environment variables used by the skeleton:
 

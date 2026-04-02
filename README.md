@@ -101,17 +101,84 @@ The first Phase 2 AWS integration entrypoint is now present:
 ./scripts/run-aws-integration.sh
 ```
 
-At the moment this is a runner skeleton. It prepares isolated naming and temp
-configuration for a real-cloud integration run, and it can now perform the
-first isolated foundation apply, publish the bootstrap fixture image, and run
-the second apply to fetch the service URL and verify the public fixture
-response. It also now traps failures in destructive modes and attempts an
-isolated `tofu destroy` with the same generated config, preserving the
-original failure while reporting cleanup failures separately. The remaining
-TODO is success-path destroy/cleanup. See
-[`docs/aws-integration.md`](docs/aws-integration.md) for the current scope and
-fixture contract. Failed runs now keep their generated integration workdir so
-cleanup logs and `cleanup-status.json` remain available for inspection.
+Phase 1 and Phase 2 serve different purposes:
+
+- Phase 1: `./scripts/verify-template-locally.sh`
+  cheap local contract verification with no real cloud activity
+- Phase 2: `./scripts/run-aws-integration.sh`
+  slower real AWS integration flow using isolated state, names, and fixture
+  images
+
+The Phase 2 runner can currently:
+
+- materialize isolated integration config
+- run the first isolated foundation apply
+- publish the bootstrap fixture image to ECR
+- run the second apply and fetch the App Runner service URL
+- verify the public fixture response
+- attempt failure cleanup with the same isolated config if a destructive step
+  fails
+
+The remaining TODO is success-path destroy/manual destroy. See
+[`docs/aws-integration.md`](docs/aws-integration.md) for the exact command
+surface, required tools, credentials, and current boundaries.
+
+AWS integration on demand
+-------------------------
+
+Phase 2 requires real AWS access. Before running it, make sure you have:
+
+- `tofu`
+- `aws`
+- `docker`
+- `jq`
+- `git`
+- `python3`
+- an AWS profile or exported AWS credentials with permission to:
+  - create/update/destroy the template resources
+  - push to ECR
+  - read App Runner service state
+- a Terraform state bucket in `TF_STATE_BUCKET`
+- `GITHUB_OWNER` set for the target GitHub namespace
+
+Recommended environment:
+
+```bash
+export AWS_PROFILE=your-profile
+export AWS_REGION=ap-southeast-2
+export TF_STATE_BUCKET=your-tf-state-bucket
+export GITHUB_OWNER=your-github-owner
+direnv reload
+```
+
+To inspect the planned integration sequence without touching AWS:
+
+```bash
+./scripts/run-aws-integration.sh
+```
+
+To run the current end-to-end AWS integration lane on demand:
+
+```bash
+./scripts/run-aws-integration.sh run
+```
+
+Current behavior of `run`:
+
+- creates an isolated integration workdir and backend key
+- applies foundation infrastructure
+- publishes the bootstrap fixture image
+- applies again to create/update App Runner
+- fetches the service URL
+- verifies the public fixture response
+- if a destructive step fails, attempts cleanup destroy automatically
+
+Current limitations:
+
+- success-path destroy is not implemented yet
+- explicit manual destroy mode is not implemented yet
+- failed runs preserve their workdir intentionally for cleanup inspection
+- cleanup outcomes are recorded in `cleanup-status.json`
 
 Bootstrapping a new project
 ---------------------------
