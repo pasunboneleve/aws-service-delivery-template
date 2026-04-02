@@ -6,6 +6,7 @@ This document describes the Phase 2 AWS integration lane entrypoint:
 ./scripts/run-aws-integration.sh
 ./scripts/run-aws-integration.sh foundation-apply
 ./scripts/run-aws-integration.sh bootstrap-publish
+./scripts/run-aws-integration.sh second-apply
 ```
 
 Current status:
@@ -19,6 +20,7 @@ Current status:
 - it prints the intended command sequence for the real integration flow
 - it can run the first isolated `tofu init` + `tofu apply` for foundation resources
 - it can build and push the bootstrap fixture image to ECR
+- it can run the second isolated apply and fetch the service URL
 
 Current naming strategy:
 
@@ -36,8 +38,7 @@ Current naming strategy:
 
 Current TODO boundaries:
 
-- performing the second `tofu apply`
-- fetching and verifying the public App Runner URL
+- verifying the public App Runner response body
 - reliable destroy on partial failures
 
 Environment variables used by the skeleton:
@@ -93,3 +94,22 @@ AWS_REGION=ap-southeast-2 \
 
 The runner uses the repo-local fixture in `integration-fixture/` and pushes the
 derived integration tag to the isolated ECR repository name.
+
+To run the second apply and fetch the service URL, you must provide:
+
+- `AWS_REGION`
+- `TF_STATE_BUCKET`
+- `GITHUB_OWNER`
+
+Then run:
+
+```bash
+AWS_REGION=ap-southeast-2 \
+TF_STATE_BUCKET=your-state-bucket \
+GITHUB_OWNER=your-github-owner \
+./scripts/run-aws-integration.sh second-apply
+```
+
+The runner first checks `tofu output -raw service_url`.
+If that is still empty, it falls back to `aws apprunner list-services`.
+If neither path yields a URL, the run fails clearly.

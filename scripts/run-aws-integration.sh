@@ -25,7 +25,7 @@ REMOTE_IMAGE_URI=""
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/run-aws-integration.sh [plan|foundation-apply|bootstrap-publish]
+  ./scripts/run-aws-integration.sh [plan|foundation-apply|bootstrap-publish|second-apply]
 
 This is the Phase 2 AWS integration runner skeleton.
 Current behavior:
@@ -35,6 +35,7 @@ Current behavior:
   - prints the intended command sequence and current TODO boundaries
   - optionally performs the first foundation apply
   - optionally builds and pushes the bootstrap fixture image
+  - optionally performs the second apply and fetches the service URL
 
 Environment overrides:
   AWS_INTEGRATION_RUN_ID       Override the generated run id
@@ -198,10 +199,11 @@ Planned AWS integration sequence
    ./scripts/run-aws-integration.sh bootstrap-publish
 
 4. Run the second apply so Terraform can create the App Runner service:
-   tofu apply -var-file="${TFVARS_PATH}"
+   ./scripts/run-aws-integration.sh second-apply
 
 5. Fetch the App Runner service URL and verify the public fixture response.
-   TODO: decide whether the runner should use tofu output, AWS CLI, or both.
+   The second-apply mode fetches the URL from tofu output, then falls back to
+   AWS App Runner service discovery if needed.
 
 6. Destroy the isolated integration stack and remove temp artifacts:
    tofu destroy -var-file="${TFVARS_PATH}"
@@ -210,8 +212,9 @@ Planned AWS integration sequence
 Current boundary:
 - This runner now supports the isolated foundation apply.
 - It now supports publishing the bootstrap fixture image.
-- It still does not create the runtime service on a second apply, verify the
-  public URL, or destroy integration infrastructure.
+- It now supports the second apply and service URL fetch.
+- It still does not verify the public response body or destroy integration
+  infrastructure.
 EOF
 }
 
@@ -292,13 +295,73 @@ run_bootstrap_publish() {
   docker push "${REMOTE_IMAGE_URI}"
 }
 
+fetch_service_url() {
+  local service_url=""
+
+  service_url="$(
+    cd "${INFRA_DIR}" && tofu output -raw service_url 2>/dev/null || true
+  )"
+
+  if [ -n "${service_url}" ]; then
+    printf '%s' "${service_url}"
+    return 0
+  fi
+
+  require_command aws
+  require_materialized_value "AWS_REGION" "${AWS_REGION:-}"
+
+  service_url="$(
+    aws apprunner list-services \
+      --region "${AWS_REGION}" \
+      --query "ServiceSummaryList[?ServiceName=='${SERVICE_NAME}'].ServiceUrl | [0]" \
+      --output text 2>/dev/null || true
+  )"
+
+  if [ -n "${service_url}" ] && [ "${service_url}" != "None" ]; then
+    printf '%s' "${service_url}"
+    return 0
+  fi
+
+  echo "Unable to determine App Runner service URL after second apply." >&2
+  return 1
+}
+
+run_second_apply() {
+  local auto_approve="${AWS_INTEGRATION_AUTO_APPROVE:-1}"
+  local service_url=""
+
+  require_materialized_value "AWS_REGION" "${AWS_REGION:-}"
+  require_materialized_value "TF_STATE_BUCKET" "${TF_STATE_BUCKET:-}"
+  require_materialized_value "GITHUB_OWNER" "${GITHUB_OWNER:-}"
+
+  echo
+  echo "Running isolated second apply"
+  echo "Infra dir: ${INFRA_DIR}"
+  echo "Backend config: ${BACKEND_CONFIG_PATH}"
+  echo "Vars file: ${TFVARS_PATH}"
+
+  (
+    cd "${INFRA_DIR}"
+    tofu init -backend-config="${BACKEND_CONFIG_PATH}"
+
+    if [ "${auto_approve}" = "0" ]; then
+      tofu apply -var-file="${TFVARS_PATH}"
+    else
+      tofu apply -auto-approve -var-file="${TFVARS_PATH}"
+    fi
+  )
+
+  service_url="$(fetch_service_url)"
+  echo "Service URL: ${service_url}"
+}
+
 main() {
   if [ "${MODE}" = "--help" ] || [ "${MODE}" = "-h" ]; then
     usage
     exit 0
   fi
 
-  if [ "${MODE}" != "plan" ] && [ "${MODE}" != "foundation-apply" ] && [ "${MODE}" != "bootstrap-publish" ]; then
+  if [ "${MODE}" != "plan" ] && [ "${MODE}" != "foundation-apply" ] && [ "${MODE}" != "bootstrap-publish" ] && [ "${MODE}" != "second-apply" ]; then
     echo "Unsupported mode: ${MODE}" >&2
     usage >&2
     exit 1
@@ -324,7 +387,12 @@ main() {
     return
   fi
 
-  run_bootstrap_publish
+  if [ "${MODE}" = "bootstrap-publish" ]; then
+    run_bootstrap_publish
+    return
+  fi
+
+  run_second_apply
 }
 
 main "$@"
