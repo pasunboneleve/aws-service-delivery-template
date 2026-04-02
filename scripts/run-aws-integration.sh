@@ -203,8 +203,9 @@ Planned AWS integration sequence
    TODO: add cleanup safeguards for partial failures.
 
 Current boundary:
-- This skeleton prepares the isolated workspace and materialized integration config only.
-- It does not call AWS, Docker, or tofu apply yet.
+- This runner now supports the isolated foundation apply.
+- It still does not publish the bootstrap image, create the runtime service on a
+  second apply, verify the public URL, or destroy integration infrastructure.
 EOF
 }
 
