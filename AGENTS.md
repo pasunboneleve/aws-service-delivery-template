@@ -23,6 +23,13 @@ Run the standard cheap assurance check:
 ./scripts/verify-template-locally.sh
 ```
 
+### AWS Integration Skeleton
+Use the Phase 2 runner skeleton to inspect isolated naming and command
+sequencing for a real AWS integration run:
+```bash
+./scripts/run-aws-integration.sh
+```
+
 ### AWS Deployment Commands
 Set required environment variables first:
 ```bash

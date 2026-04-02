@@ -92,6 +92,21 @@ This is the cheap local assurance command for the template. It checks Terraform
 validity, contract tests under `tests/`, and optional shell and workflow
 linters when they are installed locally.
 
+AWS integration skeleton
+------------------------
+
+The first Phase 2 AWS integration entrypoint is now present:
+
+```bash
+./scripts/run-aws-integration.sh
+```
+
+At the moment this is a runner skeleton. It prepares isolated naming and temp
+configuration for a real-cloud integration run, then prints the planned apply,
+bootstrap image, verify, and destroy sequence. See
+[`docs/aws-integration.md`](docs/aws-integration.md) for the current scope and
+TODO boundaries.
+
 Bootstrapping a new project
 ---------------------------
 
