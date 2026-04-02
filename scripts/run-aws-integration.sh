@@ -42,11 +42,12 @@ CLEANUP_STATUS_PATH=""
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/run-aws-integration.sh [plan|run|foundation-apply|bootstrap-publish|second-apply|verify|destroy]
+  ./scripts/run-aws-integration.sh [plan|preflight|run|foundation-apply|bootstrap-publish|second-apply|verify|destroy]
 
 This is the Phase 2 AWS integration runner skeleton.
 Current behavior:
   - creates an isolated temp workdir
+  - optionally runs a local readiness preflight with no AWS calls
   - derives unique naming and state paths for an integration run
   - materializes isolated backend, tfvars, and metadata files
   - prints the intended command sequence and current TODO boundaries
@@ -327,6 +328,104 @@ require_materialized_value() {
   fi
 }
 
+check_tool() {
+  local tool_name="$1"
+
+  if command -v "${tool_name}" >/dev/null 2>&1; then
+    echo "ready: tool '${tool_name}' is installed"
+    return 0
+  fi
+
+  echo "missing: tool '${tool_name}' is not installed"
+  return 1
+}
+
+check_env_value() {
+  local env_name="$1"
+  local env_value="${!env_name:-}"
+
+  if [ -n "${env_value}" ]; then
+    echo "ready: ${env_name} is set"
+    return 0
+  fi
+
+  echo "missing: ${env_name} is not set"
+  return 1
+}
+
+check_aws_credentials_source() {
+  if [ -n "${AWS_PROFILE:-}" ]; then
+    echo "ready: AWS credentials source is configured via AWS_PROFILE"
+    return 0
+  fi
+
+  if [ -n "${AWS_ACCESS_KEY_ID:-}" ] && [ -n "${AWS_SECRET_ACCESS_KEY:-}" ]; then
+    echo "ready: AWS credentials source is configured via AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY"
+    return 0
+  fi
+
+  echo "missing: AWS credentials source is not configured (set AWS_PROFILE or AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY)"
+  return 1
+}
+
+check_github_auth_source() {
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    echo "ready: GitHub provider auth is configured via GITHUB_TOKEN"
+    return 0
+  fi
+
+  if [ -f "${INFRA_DIR}/prod.tfvars" ] && grep -Eq '^[[:space:]]*github_token[[:space:]]*=' "${INFRA_DIR}/prod.tfvars"; then
+    echo "ready: GitHub provider auth is configured via infra/prod.tfvars"
+    return 0
+  fi
+
+  echo "missing: GitHub provider auth is not configured (set GITHUB_TOKEN or github_token in infra/prod.tfvars)"
+  return 1
+}
+
+run_preflight() {
+  local failures=0
+
+  log_step "preflight" "Checking local readiness for the first real AWS integration run"
+
+  for tool_name in tofu aws docker jq git python3; do
+    if ! check_tool "${tool_name}"; then
+      failures=$((failures + 1))
+    fi
+  done
+
+  if ! check_env_value "AWS_REGION"; then
+    failures=$((failures + 1))
+  fi
+  if ! check_env_value "TF_STATE_BUCKET"; then
+    failures=$((failures + 1))
+  fi
+  if ! check_env_value "GITHUB_OWNER"; then
+    failures=$((failures + 1))
+  fi
+
+  if ! check_aws_credentials_source; then
+    failures=$((failures + 1))
+  fi
+  if ! check_github_auth_source; then
+    failures=$((failures + 1))
+  fi
+
+  if [ -f "${INFRA_DIR}/prod.tfvars" ]; then
+    echo "ready: ${INFRA_DIR}/prod.tfvars exists"
+  else
+    echo "missing: ${INFRA_DIR}/prod.tfvars does not exist"
+    failures=$((failures + 1))
+  fi
+
+  if [ "${failures}" -ne 0 ]; then
+    echo "Preflight failed with ${failures} missing item(s)." >&2
+    return 1
+  fi
+
+  echo "Preflight passed: environment is ready for a real AWS integration run."
+}
+
 slugify() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9-' '-'
 }
@@ -487,6 +586,9 @@ Planned AWS integration sequence
 0. Run the end-to-end integration sequence with failure cleanup:
    ./scripts/run-aws-integration.sh run
 
+Readiness check before any AWS call:
+   ./scripts/run-aws-integration.sh preflight
+
 1. Initialize OpenTofu with an isolated backend key:
    cd "${INFRA_DIR}"
    tofu init -backend-config="${BACKEND_CONFIG_PATH}"
@@ -511,6 +613,8 @@ Planned AWS integration sequence
    AWS_INTEGRATION_RUN_ID=<previous-run-id> ./scripts/run-aws-integration.sh destroy
 
 Current boundary:
+- The preflight mode checks tools and required local inputs without
+  contacting AWS.
 - The run mode now preserves the original failing exit code.
 - It reports destroy failures as secondary cleanup failures.
 - It now attempts isolated cleanup destroy from an EXIT trap when a
@@ -779,7 +883,7 @@ main() {
     exit 0
   fi
 
-  if [ "${MODE}" != "plan" ] && [ "${MODE}" != "run" ] && [ "${MODE}" != "foundation-apply" ] && [ "${MODE}" != "bootstrap-publish" ] && [ "${MODE}" != "second-apply" ] && [ "${MODE}" != "verify" ] && [ "${MODE}" != "destroy" ]; then
+  if [ "${MODE}" != "plan" ] && [ "${MODE}" != "preflight" ] && [ "${MODE}" != "run" ] && [ "${MODE}" != "foundation-apply" ] && [ "${MODE}" != "bootstrap-publish" ] && [ "${MODE}" != "second-apply" ] && [ "${MODE}" != "verify" ] && [ "${MODE}" != "destroy" ]; then
     echo "Unsupported mode: ${MODE}" >&2
     usage >&2
     exit 1
@@ -794,6 +898,11 @@ main() {
   require_command git
   require_command jq
   require_command mktemp
+
+  if [ "${MODE}" = "preflight" ]; then
+    run_preflight
+    exit $?
+  fi
 
   trap 'finalize_run $?' EXIT
 

@@ -1,5 +1,9 @@
 ## Deployment Procedures
 
+This file is the shorter execution companion to the root [README](../README.md).
+Use the README for the overall flow. Use this document when you are actively
+bootstrapping or deploying a project from the template.
+
 ### Install dependencies
 
 - [direnv](https://direnv.net/)
@@ -21,7 +25,7 @@ automatically use `infra/prod.tfvars`.
 If `AWS_PROFILE` is set, `direnv reload` also refreshes exported AWS
 session credentials.
 
-### Initial infrastructure setup
+### Bootstrap the project
 
 1. Bootstrap the S3 backend bucket:
 
@@ -60,9 +64,9 @@ tofu apply
 ../scripts/update-readme-live-url.sh
 ```
 
-### Local verification
+### Verification options
 
-Run the cheap local verification command before pushing template changes:
+- Fast local checks before changing the template:
 
 ```bash
 ./scripts/verify-template-locally.sh
@@ -70,3 +74,13 @@ Run the cheap local verification command before pushing template changes:
 
 It runs Terraform checks, the repository contract tests, and optional
 `shellcheck` and `actionlint` if they are available locally.
+
+- Real AWS integration readiness and execution:
+
+```bash
+../scripts/run-aws-integration.sh preflight
+../scripts/run-aws-integration.sh run
+```
+
+For the full integration runner behavior, failure handling, and manual destroy
+mode, see [../docs/aws-integration.md](../docs/aws-integration.md).

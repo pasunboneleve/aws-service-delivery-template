@@ -4,6 +4,7 @@ This document describes the Phase 2 AWS integration lane entrypoint:
 
 ```bash
 ./scripts/run-aws-integration.sh
+./scripts/run-aws-integration.sh preflight
 ./scripts/run-aws-integration.sh run
 ./scripts/run-aws-integration.sh foundation-apply
 ./scripts/run-aws-integration.sh bootstrap-publish
@@ -51,6 +52,45 @@ Required environment for real AWS runs:
 - `TF_STATE_BUCKET`
 - `GITHUB_OWNER`
 - usable AWS credentials, for example via `AWS_PROFILE`
+- GitHub provider auth, for example via `GITHUB_TOKEN`
+
+First real run
+--------------
+
+Before touching AWS, run:
+
+```bash
+./scripts/run-aws-integration.sh preflight
+```
+
+The preflight mode checks:
+
+- required local tools:
+  - `tofu`
+  - `aws`
+  - `docker`
+  - `jq`
+  - `git`
+  - `python3`
+- required env vars:
+  - `AWS_REGION`
+  - `TF_STATE_BUCKET`
+  - `GITHUB_OWNER`
+- AWS credential source:
+  - `AWS_PROFILE`, or
+  - `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`
+- GitHub provider auth source:
+  - `GITHUB_TOKEN`, or
+  - `github_token` in `infra/prod.tfvars`
+- local `infra/prod.tfvars` presence
+
+It does not contact AWS.
+
+Once preflight passes, the normal first real run is:
+
+```bash
+./scripts/run-aws-integration.sh run
+```
 
 Current naming strategy:
 
@@ -74,6 +114,8 @@ Current command surface:
 
 - `./scripts/run-aws-integration.sh`
   print the current plan and generated isolated naming
+- `./scripts/run-aws-integration.sh preflight`
+  check local readiness without contacting AWS
 - `./scripts/run-aws-integration.sh run`
   execute the current on-demand AWS integration flow
 - `./scripts/run-aws-integration.sh foundation-apply`
