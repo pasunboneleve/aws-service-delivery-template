@@ -64,6 +64,17 @@ require_command() {
   fi
 }
 
+validate_optional_env() {
+  local env_name="$1"
+  local env_value="$2"
+  local env_pattern="$3"
+
+  if [ -n "${env_value}" ] && ! printf '%s' "${env_value}" | grep -Eq "${env_pattern}"; then
+    echo "Invalid value for ${env_name}: ${env_value}" >&2
+    exit 1
+  fi
+}
+
 slugify() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9-' '-'
 }
@@ -94,6 +105,9 @@ materialize_tfvars() {
   TFVARS_PATH="${WORKDIR}/integration.tfvars"
   BACKEND_CONFIG_PATH="${WORKDIR}/backend.hcl"
   METADATA_PATH="${WORKDIR}/integration-metadata.json"
+  validate_optional_env "AWS_REGION" "${AWS_REGION:-}" '^[a-z]{2}-[a-z0-9-]+-[0-9]+$'
+  validate_optional_env "GITHUB_OWNER" "${GITHUB_OWNER:-}" '^[A-Za-z0-9_.-]+$'
+  validate_optional_env "TF_STATE_BUCKET" "${TF_STATE_BUCKET:-}" '^[A-Za-z0-9.-]+$'
   aws_region_placeholder="${AWS_REGION:-__SET_AWS_REGION__}"
   github_owner_placeholder="${GITHUB_OWNER:-__SET_GITHUB_OWNER__}"
   tf_state_bucket_placeholder="${TF_STATE_BUCKET:-__SET_TF_STATE_BUCKET__}"
@@ -118,18 +132,25 @@ region       = "${aws_region_placeholder}"
 use_lockfile = true
 EOF
 
-  cat > "${METADATA_PATH}" <<EOF
-{
-  "run_id": "${RUN_ID}",
-  "integration_prefix": "${INTEGRATION_PREFIX}",
-  "service_name": "${SERVICE_NAME}",
-  "ecr_repository_name": "${ECR_REPOSITORY_NAME}",
-  "image_tag": "${IMAGE_TAG}",
-  "state_key": "${STATE_KEY}",
-  "tfvars_path": "${TFVARS_PATH}",
-  "backend_config_path": "${BACKEND_CONFIG_PATH}"
-}
-EOF
+  jq -n \
+    --arg run_id "${RUN_ID}" \
+    --arg integration_prefix "${INTEGRATION_PREFIX}" \
+    --arg service_name "${SERVICE_NAME}" \
+    --arg ecr_repository_name "${ECR_REPOSITORY_NAME}" \
+    --arg image_tag "${IMAGE_TAG}" \
+    --arg state_key "${STATE_KEY}" \
+    --arg tfvars_path "${TFVARS_PATH}" \
+    --arg backend_config_path "${BACKEND_CONFIG_PATH}" \
+    '{
+      run_id: $run_id,
+      integration_prefix: $integration_prefix,
+      service_name: $service_name,
+      ecr_repository_name: $ecr_repository_name,
+      image_tag: $image_tag,
+      state_key: $state_key,
+      tfvars_path: $tfvars_path,
+      backend_config_path: $backend_config_path
+    }' > "${METADATA_PATH}"
 
   cat <<EOF
 Run ID: ${RUN_ID}
@@ -189,6 +210,7 @@ main() {
 
   require_command tofu
   require_command git
+  require_command jq
   require_command mktemp
 
   trap cleanup EXIT
