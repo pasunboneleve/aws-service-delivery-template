@@ -34,6 +34,7 @@ CLEANUP_EXIT_CODE=0
 CLEANUP_TIMEOUT_SECONDS="${AWS_INTEGRATION_CLEANUP_TIMEOUT_SECONDS:-300}"
 SIMULATED_FAILURE_STEPS="${AWS_INTEGRATION_SIMULATE_FAILURE_AT:-}"
 TOFU_DESTROY_LOG_PATH=""
+EXIT_CLEANUP_SKIPPED=98
 
 usage() {
   cat <<'EOF'
@@ -162,15 +163,15 @@ attempt_cleanup_destroy() {
 
   if [ -z "${AWS_REGION:-}" ] || printf '%s' "${AWS_REGION:-}" | grep -q '^__SET_'; then
     echo "Cleanup destroy skipped: AWS_REGION is not materialized." >&2
-    return 98
+    return "${EXIT_CLEANUP_SKIPPED}"
   fi
   if [ -z "${TF_STATE_BUCKET:-}" ] || printf '%s' "${TF_STATE_BUCKET:-}" | grep -q '^__SET_'; then
     echo "Cleanup destroy skipped: TF_STATE_BUCKET is not materialized." >&2
-    return 98
+    return "${EXIT_CLEANUP_SKIPPED}"
   fi
   if [ -z "${GITHUB_OWNER:-}" ] || printf '%s' "${GITHUB_OWNER:-}" | grep -q '^__SET_'; then
     echo "Cleanup destroy skipped: GITHUB_OWNER is not materialized." >&2
-    return 98
+    return "${EXIT_CLEANUP_SKIPPED}"
   fi
 
   if printf ',%s,' "${SIMULATED_FAILURE_STEPS}" | grep -Fq ',destroy,'; then
@@ -223,7 +224,11 @@ finalize_run() {
     if [ "${CLEANUP_REQUIRED}" = "1" ]; then
       attempt_cleanup_destroy
       CLEANUP_EXIT_CODE=$?
-      if [ "${CLEANUP_EXIT_CODE}" -ne 0 ]; then
+      if [ "${CLEANUP_EXIT_CODE}" -eq 0 ]; then
+        echo "Cleanup succeeded during step 'destroy'." >&2
+      elif [ "${CLEANUP_EXIT_CODE}" -eq "${EXIT_CLEANUP_SKIPPED}" ]; then
+        echo "Cleanup skipped during step 'destroy' because required integration inputs were not materialized." >&2
+      else
         echo "Cleanup also failed during step 'destroy' with exit code ${CLEANUP_EXIT_CODE}." >&2
         if [ -n "${TOFU_DESTROY_LOG_PATH}" ] && [ -f "${TOFU_DESTROY_LOG_PATH}" ]; then
           echo "Cleanup logs saved to ${TOFU_DESTROY_LOG_PATH}" >&2

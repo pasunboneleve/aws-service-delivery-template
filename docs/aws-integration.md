@@ -76,6 +76,10 @@ Failure handling behavior:
   trap attempts `tofu destroy` using the same generated `backend.hcl`,
   `integration.tfvars`, and run id
 - the original failing step and exit code are preserved and reported first
+- if cleanup succeeds, that is reported explicitly
+- if cleanup is skipped because required isolated inputs were never
+  materialized, that is reported explicitly and not treated as a cleanup
+  failure
 - if cleanup also fails, that is reported as a secondary failure and does not
   mask the original exit
 - cleanup destroy is bounded by `AWS_INTEGRATION_CLEANUP_TIMEOUT_SECONDS`
@@ -122,6 +126,8 @@ That is useful for validating that:
 
 - the original failure is reported against the correct step
 - cleanup destroy is still attempted
+- cleanup skip and cleanup success are clearly distinguished from cleanup
+  failure
 - destroy failures are reported as secondary failures
 
 To publish the bootstrap image, you must provide:
