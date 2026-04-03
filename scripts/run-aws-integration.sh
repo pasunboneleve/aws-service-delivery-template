@@ -374,12 +374,17 @@ check_github_auth_source() {
     return 0
   fi
 
-  if [ -f "${INFRA_DIR}/prod.tfvars" ] && grep -Eq '^[[:space:]]*github_token[[:space:]]*=' "${INFRA_DIR}/prod.tfvars"; then
-    echo "ready: GitHub provider auth is configured via infra/prod.tfvars"
-    return 0
+  if [ -f "${INFRA_DIR}/prod.tfvars" ]; then
+    if grep -Eq '^[[:space:]]*github_token[[:space:]]*=' "${INFRA_DIR}/prod.tfvars"; then
+      echo "ready: GitHub provider auth is configured via infra/prod.tfvars"
+      return 0
+    fi
+
+    echo "missing: GitHub provider auth is not configured (set GITHUB_TOKEN or github_token in infra/prod.tfvars)"
+    return 1
   fi
 
-  echo "missing: GitHub provider auth is not configured (set GITHUB_TOKEN or github_token in infra/prod.tfvars)"
+  echo "missing: GitHub provider auth is not configured (set GITHUB_TOKEN or add infra/prod.tfvars with github_token)"
   return 1
 }
 
@@ -894,15 +899,15 @@ main() {
     exit 1
   fi
 
-  require_command tofu
-  require_command git
-  require_command jq
-  require_command mktemp
-
   if [ "${MODE}" = "preflight" ]; then
     run_preflight
     exit $?
   fi
+
+  require_command tofu
+  require_command git
+  require_command jq
+  require_command mktemp
 
   trap 'finalize_run $?' EXIT
 
