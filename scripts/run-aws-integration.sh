@@ -374,22 +374,23 @@ check_github_auth_source() {
     return 0
   fi
 
-  if [ -f "${INFRA_DIR}/prod.tfvars" ]; then
-    if grep -Eq '^[[:space:]]*github_token[[:space:]]*=' "${INFRA_DIR}/prod.tfvars"; then
-      echo "ready: GitHub provider auth is configured via infra/prod.tfvars"
-      return 0
-    fi
-
-    echo "missing: GitHub provider auth is not configured (set GITHUB_TOKEN or github_token in infra/prod.tfvars)"
-    return 1
+  if [ ! -f "${INFRA_DIR}/prod.tfvars" ]; then
+    echo "note: GitHub provider auth via infra/prod.tfvars cannot be checked until ${INFRA_DIR}/prod.tfvars exists"
+    return 2
   fi
 
-  echo "missing: GitHub provider auth is not configured (set GITHUB_TOKEN or add infra/prod.tfvars with github_token)"
+  if grep -Eq '^[[:space:]]*github_token[[:space:]]*=' "${INFRA_DIR}/prod.tfvars"; then
+    echo "ready: GitHub provider auth is configured via infra/prod.tfvars"
+    return 0
+  fi
+
+  echo "missing: GitHub provider auth is not configured (set GITHUB_TOKEN or github_token in infra/prod.tfvars)"
   return 1
 }
 
 run_preflight() {
   local failures=0
+  local github_auth_status=0
 
   log_step "preflight" "Checking local readiness for the first real AWS integration run"
 
@@ -412,15 +413,24 @@ run_preflight() {
   if ! check_aws_credentials_source; then
     failures=$((failures + 1))
   fi
-  if ! check_github_auth_source; then
-    failures=$((failures + 1))
-  fi
-
   if [ -f "${INFRA_DIR}/prod.tfvars" ]; then
     echo "ready: ${INFRA_DIR}/prod.tfvars exists"
   else
     echo "missing: ${INFRA_DIR}/prod.tfvars does not exist"
     failures=$((failures + 1))
+  fi
+
+  if check_github_auth_source; then
+    :
+  else
+    github_auth_status=$?
+    if [ "${github_auth_status}" -eq 1 ]; then
+      failures=$((failures + 1))
+    fi
+  fi
+
+  if [ "${github_auth_status}" -eq 2 ]; then
+    echo "note: GitHub provider auth will be satisfied by setting GITHUB_TOKEN or adding github_token to ${INFRA_DIR}/prod.tfvars"
   fi
 
   if [ "${failures}" -ne 0 ]; then
