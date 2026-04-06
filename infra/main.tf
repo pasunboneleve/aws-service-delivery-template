@@ -11,7 +11,7 @@ data "external" "apprunner_image_presence" {
   ]
 
   query = {
-    repository_url = aws_ecr_repository.images.repository_url
+    repository_name = var.service_name
     image_tag      = var.apprunner_image_tag
     aws_region     = var.aws_region
   }

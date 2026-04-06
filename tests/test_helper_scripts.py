@@ -41,6 +41,18 @@ class HelperScriptContractsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertEqual(json.loads(result.stdout), {"exists": "false"})
 
+    def test_missing_repository_returns_false(self) -> None:
+        result = self._run_script(
+            aws_script=(
+                "#!/usr/bin/env bash\n"
+                "echo 'An error occurred (RepositoryNotFoundException) when calling the DescribeImages operation' >&2\n"
+                "exit 255\n"
+            )
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(json.loads(result.stdout), {"exists": "false"})
+
     def test_auth_or_api_failure_exits_non_zero(self) -> None:
         result = self._run_script(
             aws_script=(
@@ -66,7 +78,7 @@ class HelperScriptContractsTest(unittest.TestCase):
             env["PATH"] = f"{stub_dir}:{env['PATH']}"
             payload = json.dumps(
                 {
-                    "repository_url": "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/example",
+                    "repository_name": "example",
                     "image_tag": "latest",
                     "aws_region": "ap-southeast-2",
                 }
