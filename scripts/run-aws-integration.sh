@@ -162,6 +162,15 @@ sys.exit(completed.returncode)
 PY
 }
 
+run_isolated_tofu_init() {
+  # The integration runner generates one backend.hcl per run id and reuses that
+  # exact file for apply, verify, cleanup, and manual destroy. `-reconfigure`
+  # avoids interactive backend migration prompts against the repo's normal
+  # local .terraform metadata while staying pinned to the same isolated backend
+  # location for the lifetime of the run.
+  tofu init -reconfigure -backend-config="${BACKEND_CONFIG_PATH}"
+}
+
 attempt_cleanup_destroy() {
   local cleanup_script=""
   local auto_approve="${AWS_INTEGRATION_AUTO_APPROVE:-1}"
@@ -198,7 +207,7 @@ attempt_cleanup_destroy() {
 #!/usr/bin/env bash
 set -euo pipefail
 cd "${INFRA_DIR}"
-tofu init -backend-config="${BACKEND_CONFIG_PATH}"
+tofu init -reconfigure -backend-config="${BACKEND_CONFIG_PATH}"
 EOF
 
   if [ "${auto_approve}" = "0" ]; then
@@ -575,7 +584,7 @@ run_destroy() {
 #!/usr/bin/env bash
 set -euo pipefail
 cd "${INFRA_DIR}"
-tofu init -backend-config="${BACKEND_CONFIG_PATH}"
+tofu init -reconfigure -backend-config="${BACKEND_CONFIG_PATH}"
 EOF
 
   if [ "${auto_approve}" = "0" ]; then
@@ -606,7 +615,9 @@ Readiness check before any AWS call:
 
 1. Initialize OpenTofu with an isolated backend key:
    cd "${INFRA_DIR}"
-   tofu init -backend-config="${BACKEND_CONFIG_PATH}"
+   # The runner reuses one generated backend.hcl per run id, so reconfigure
+   # stays pinned to the same isolated backend location within that run.
+   tofu init -reconfigure -backend-config="${BACKEND_CONFIG_PATH}"
 
 2. Run the first foundation apply with isolated vars:
    tofu apply -var-file="${TFVARS_PATH}"
@@ -658,7 +669,7 @@ run_foundation_apply() {
 
   (
     cd "${INFRA_DIR}"
-    tofu init -backend-config="${BACKEND_CONFIG_PATH}"
+    run_isolated_tofu_init
 
     if [ "${auto_approve}" = "0" ]; then
       tofu apply -var-file="${TFVARS_PATH}"
@@ -786,7 +797,7 @@ run_second_apply() {
 
   (
     cd "${INFRA_DIR}"
-    tofu init -backend-config="${BACKEND_CONFIG_PATH}"
+    run_isolated_tofu_init
 
     if [ "${auto_approve}" = "0" ]; then
       tofu apply -var-file="${TFVARS_PATH}"
