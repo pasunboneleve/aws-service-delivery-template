@@ -17,7 +17,7 @@ github_branch           = "main"
 # Optional:
 # github_environment    = "production"
 # github_token          = "ghp_xxx" # Or prefer exporting GITHUB_TOKEN in your shell
-# apprunner_image_tag   = "latest"
+# ecs_express_image_tag = "latest"
 # image_port            = 8080
-# apprunner_cpu         = "0.25 vCPU"
-# apprunner_memory      = "0.5 GB" # RAM, not container disk
+# ecs_express_cpu       = "256" # 0.25 vCPU
+# ecs_express_memory    = "512" # MiB of RAM, not container disk

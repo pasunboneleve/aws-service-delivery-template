@@ -38,8 +38,8 @@ class WorkflowContractsTest(unittest.TestCase):
 
     def test_workflow_cli_usage_has_matching_iam_actions(self) -> None:
         expected_command_actions = {
-            "aws apprunner list-services": "apprunner:ListServices",
-            "aws apprunner update-service": "apprunner:UpdateService",
+            "aws ecs describe-express-gateway-service": "ecs:DescribeExpressGatewayService",
+            "aws ecs update-express-gateway-service": "ecs:UpdateExpressGatewayService",
         }
 
         for command_snippet, action in expected_command_actions.items():
@@ -47,17 +47,11 @@ class WorkflowContractsTest(unittest.TestCase):
                 self.assertIn(command_snippet, self.workflow_text)
                 self.assertIn(f'"{action}"', self.main_tf_text)
 
-        self.assertIn("AccessRoleArn=${ECR_ACCESS_ROLE_ARN}", self.workflow_text)
-        self.assertIn('"iam:PassRole"', self.main_tf_text)
-
-        # The workflow does not call describe-service today; keep the role ready for
-        # status checks without letting the permission drift away unnoticed.
-        self.assertIn('"apprunner:DescribeService"', self.main_tf_text)
-
-    def test_ci_does_not_create_app_runner_service_directly(self) -> None:
+    def test_ci_does_not_create_runtime_service_directly(self) -> None:
         forbidden_patterns = [
             "aws apprunner create-service",
-            "aws apprunner start-deployment",
+            "aws apprunner update-service",
+            "aws ecs create-express-gateway-service",
         ]
 
         for pattern in forbidden_patterns:

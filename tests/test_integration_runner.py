@@ -286,6 +286,7 @@ class IntegrationRunnerPreflightTest(unittest.TestCase):
                         "github_repo": "repo-from-metadata",
                         "manage_github_oidc_provider": False,
                         "github_oidc_provider_arn": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+                        "service_arn": "arn:aws:ecs:ap-southeast-2:123456789012:express-gateway-service/example-service",
                     }
                 ),
                 encoding="utf-8",
@@ -327,6 +328,7 @@ class IntegrationRunnerPreflightTest(unittest.TestCase):
                         "github_repo": "repo-from-metadata",
                         "manage_github_oidc_provider": False,
                         "github_oidc_provider_arn": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+                        "service_arn": "arn:aws:ecs:ap-southeast-2:123456789012:express-gateway-service/example-service",
                     }
                 ),
                 encoding="utf-8",
@@ -349,8 +351,8 @@ class IntegrationRunnerPreflightTest(unittest.TestCase):
                 aws_script=(
                     "#!/usr/bin/env bash\n"
                     "case \"$1 $2\" in\n"
-                    "  'apprunner list-services')\n"
-                    "    printf '%s\\n' 'https://example-service.awsapprunner.com'\n"
+                    "  'ecs describe-express-gateway-service')\n"
+                    "    printf '%s\\n' 'https://example-service.express.aws'\n"
                     "    exit 0\n"
                     "    ;;\n"
                     "  *)\n"
@@ -521,6 +523,7 @@ class IntegrationRunnerPreflightTest(unittest.TestCase):
                         "github_repo": "repo-from-metadata",
                         "manage_github_oidc_provider": False,
                         "github_oidc_provider_arn": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+                        "service_arn": "arn:aws:ecs:ap-southeast-2:123456789012:express-gateway-service/original-service",
                     }
                 ),
                 encoding="utf-8",
@@ -539,8 +542,8 @@ class IntegrationRunnerPreflightTest(unittest.TestCase):
                 aws_script=(
                     "#!/usr/bin/env bash\n"
                     "case \"$1 $2\" in\n"
-                    "  'apprunner list-services')\n"
-                    "    printf '%s\\n' 'https://example-service.awsapprunner.com'\n"
+                    "  'ecs describe-express-gateway-service')\n"
+                    "    printf '%s\\n' 'https://example-service.express.aws'\n"
                     "    exit 0\n"
                     "    ;;\n"
                     "  *)\n"
@@ -555,7 +558,7 @@ class IntegrationRunnerPreflightTest(unittest.TestCase):
             tfvars = (workdir / "integration.tfvars").read_text(encoding="utf-8")
             backend = (workdir / "backend.hcl").read_text(encoding="utf-8")
             self.assertIn('service_name        = "original-service"', tfvars)
-            self.assertIn('apprunner_image_tag = "original-image-tag"', tfvars)
+            self.assertIn('ecs_express_image_tag = "original-image-tag"', tfvars)
             self.assertIn("ecr_force_delete    = true", tfvars)
             self.assertIn('key          = "original/state/key.tfstate"', backend)
 
@@ -564,7 +567,13 @@ class IntegrationRunnerPreflightTest(unittest.TestCase):
             workdir = Path(temp_dir) / "workdir"
             workdir.mkdir()
             (workdir / "integration-metadata.json").write_text(
-                json.dumps({"run_id": "verify-run", "github_repo": "repo-from-metadata"}),
+                json.dumps(
+                    {
+                        "run_id": "verify-run",
+                        "github_repo": "repo-from-metadata",
+                        "service_arn": "arn:aws:ecs:ap-southeast-2:123456789012:express-gateway-service/verify-run",
+                    }
+                ),
                 encoding="utf-8",
             )
             tofu_log = Path(temp_dir) / "tofu.log"
@@ -622,7 +631,13 @@ class IntegrationRunnerPreflightTest(unittest.TestCase):
             workdir = Path(temp_dir) / "workdir"
             workdir.mkdir()
             (workdir / "integration-metadata.json").write_text(
-                json.dumps({"run_id": "verify-run", "github_repo": "repo-from-metadata"}),
+                json.dumps(
+                    {
+                        "run_id": "verify-run",
+                        "github_repo": "repo-from-metadata",
+                        "service_arn": "arn:aws:ecs:ap-southeast-2:123456789012:express-gateway-service/verify-run",
+                    }
+                ),
                 encoding="utf-8",
             )
             with socket.socket() as sock:
@@ -672,7 +687,7 @@ class IntegrationRunnerPreflightTest(unittest.TestCase):
                     aws_script=(
                         "#!/usr/bin/env bash\n"
                         "case \"$1 $2\" in\n"
-                        "  'apprunner list-services')\n"
+                        "  'ecs describe-express-gateway-service')\n"
                         f"    printf '%s\\n' '{fixture_url}'\n"
                         "    exit 0\n"
                         "    ;;\n"

@@ -32,7 +32,7 @@ Current status:
 - it can run the full sequence with trap-based cleanup on failure
 - it can run the first isolated `tofu init` + `tofu apply` for foundation resources
 - it can build and push the bootstrap fixture image to ECR
-- it can run the second isolated apply and fetch the service URL
+- it can run the second isolated apply and fetch the ECS Express service URL
 - it can reinitialize the isolated backend and verify the public fixture
   response at the service URL
 - it can destroy isolated integration resources automatically on success
@@ -110,7 +110,7 @@ Current naming strategy:
   taken from `GITHUB_REPO` when set, otherwise derived from `git remote
   origin`
 - `service_name`
-  trimmed from the prefix to stay within the current App Runner naming budget
+  trimmed from the prefix to stay within the current ECS Express service naming budget
 - `ecr_repository_name`
   currently matches `service_name`, which mirrors the template's Terraform
   shape
@@ -151,7 +151,7 @@ Current command surface:
 - `./scripts/run-aws-integration.sh bootstrap-publish`
   push the integration fixture image to ECR
 - `./scripts/run-aws-integration.sh second-apply`
-  run the second isolated apply and resolve the service URL
+  run the second isolated apply and resolve the ECS Express service URL
 - `./scripts/run-aws-integration.sh verify`
   verify the public fixture response contract
 - `./scripts/run-aws-integration.sh destroy`
@@ -278,7 +278,7 @@ AWS_REGION=ap-southeast-2 \
 The runner uses the repo-local fixture in `integration-fixture/` and pushes the
 derived integration tag to the isolated ECR repository name.
 
-To run the second apply and fetch the service URL, you must provide:
+To run the second apply and fetch the ECS Express service URL, you must provide:
 
 - `AWS_REGION`
 - `TF_STATE_BUCKET`
@@ -294,7 +294,7 @@ GITHUB_OWNER=your-github-owner \
 ```
 
 The runner first checks `tofu output -raw service_url`.
-If that is still empty, it falls back to `aws apprunner list-services`.
+If that is still empty, it falls back to `aws ecs describe-express-gateway-service`.
 If neither path yields a URL, the run fails clearly.
 
 To verify the public fixture response after the second apply, run:

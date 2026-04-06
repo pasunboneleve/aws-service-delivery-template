@@ -55,9 +55,9 @@ tofu apply
 4. Push an application with a `Dockerfile` to `main`.
 
 Terraform will populate the GitHub Actions secrets and variables used by the workflow.
-The GitHub Actions workflow will then build the image, push it to ECR, and update the Terraform-managed App Runner service.
+The GitHub Actions workflow will then build the image, push it to ECR, and update the Terraform-managed ECS Express service.
 
-If the ECR repository is still empty on the first `tofu apply`, Terraform will skip the App Runner service resource. After the first push populates `latest`, rerun:
+If the ECR repository is still empty on the first `tofu apply`, Terraform will skip the ECS Express service resource. After the first push populates `latest`, rerun:
 
 ```bash
 tofu apply

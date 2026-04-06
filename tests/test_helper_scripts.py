@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parents[1]
 ECR_SCRIPT_PATH = ROOT_DIR / "scripts" / "check-ecr-image.sh"
 OIDC_SCRIPT_PATH = ROOT_DIR / "scripts" / "check-github-oidc-provider.sh"
+ECS_EXPRESS_SERVICE_SCRIPT_PATH = ROOT_DIR / "scripts" / "describe-ecs-express-service.sh"
 
 
 class HelperScriptContractsTest(unittest.TestCase):
@@ -344,6 +345,76 @@ class GithubOidcProviderScriptContractsTest(unittest.TestCase):
 
             return subprocess.run(
                 ["bash", str(OIDC_SCRIPT_PATH)],
+                input=payload,
+                text=True,
+                capture_output=True,
+                check=False,
+                env=env,
+            )
+
+
+class EcsExpressServiceScriptContractsTest(unittest.TestCase):
+    def setUp(self) -> None:
+        if shutil.which("jq") is None:
+            self.skipTest("jq is required to exercise describe-ecs-express-service.sh")
+
+    def test_existing_service_returns_public_endpoint(self) -> None:
+        result = self._run_script(
+            aws_script=(
+                "#!/usr/bin/env bash\n"
+                "cat <<'EOF'\n"
+                '{"service":{"activeConfigurations":[{"ingressPaths":[{"accessType":"PUBLIC","endpoint":"https://example.express.aws"},{"accessType":"PRIVATE","endpoint":"https://internal.example"}]}]}}\n'
+                "EOF\n"
+            )
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(json.loads(result.stdout), {"endpoint": "https://example.express.aws"})
+
+    def test_missing_service_returns_empty_endpoint(self) -> None:
+        result = self._run_script(
+            aws_script=(
+                "#!/usr/bin/env bash\n"
+                "echo 'An error occurred (ResourceNotFoundException) when calling the DescribeExpressGatewayService operation' >&2\n"
+                "exit 255\n"
+            )
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(json.loads(result.stdout), {"endpoint": ""})
+
+    def test_auth_or_api_failure_exits_non_zero(self) -> None:
+        result = self._run_script(
+            aws_script=(
+                "#!/usr/bin/env bash\n"
+                "echo 'An error occurred (AccessDeniedException) when calling the DescribeExpressGatewayService operation' >&2\n"
+                "exit 255\n"
+            )
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("AccessDeniedException", result.stderr)
+
+    def _run_script(self, aws_script: str) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stub_dir = Path(temp_dir) / "bin"
+            stub_dir.mkdir()
+
+            aws_stub = stub_dir / "aws"
+            aws_stub.write_text(aws_script, encoding="utf-8")
+            aws_stub.chmod(0o755)
+
+            env = os.environ.copy()
+            env["PATH"] = f"{stub_dir}:{env['PATH']}"
+            payload = json.dumps(
+                {
+                    "service_arn": "arn:aws:ecs:ap-southeast-2:123456789012:express-gateway-service/example",
+                    "aws_region": "ap-southeast-2",
+                }
+            )
+
+            return subprocess.run(
+                ["bash", str(ECS_EXPRESS_SERVICE_SCRIPT_PATH)],
                 input=payload,
                 text=True,
                 capture_output=True,

@@ -10,14 +10,14 @@ Live URL
 
 This repository is a fresh AWS counterpart to the GCP template. It gives
 new services a minimal paved road for container delivery with GitHub
-Actions, Terraform/OpenTofu, Amazon ECR, and AWS App Runner.
+Actions, Terraform/OpenTofu, Amazon ECR, and Amazon ECS Express Mode.
 
 The shape is intentionally small:
 
 - Terraform provisions the AWS-side deployment foundation
 - GitHub Actions builds and pushes a container image
 - GitHub Actions assumes an AWS role through GitHub OIDC
-- App Runner is provisioned by Terraform and updated directly from the workflow
+- ECS Express Mode is provisioned by Terraform and updated directly from the workflow
 
 AWS credentials for local Terraform are not stored in `prod.tfvars`.
 They come from your shell environment, matching the `AWS_PROFILE` or
@@ -70,13 +70,13 @@ tofu init \
 tofu apply
 ```
 
-By default the template keeps App Runner small and cheap: `0.25 vCPU`
-and `0.5 GB` memory per instance. That memory setting is RAM, not
-container disk.
+By default the template keeps ECS Express Mode small and cheap: `256`
+CPU units (`0.25 vCPU`) and `512` MiB (`0.5 GB`) memory per task. That
+memory setting is RAM, not container disk.
 
 5. Add your application code and `Dockerfile`.
 6. Push to `main` once so GitHub Actions publishes the bootstrap `latest` image to ECR.
-7. Run `tofu apply` again so Terraform can create the App Runner service from that image.
+7. Run `tofu apply` again so Terraform can create the ECS Express service from that image.
 8. Refresh the README live URL block:
 
 ```bash
@@ -84,7 +84,15 @@ container disk.
 ```
 
 The workflow will then build the image, push it to ECR, and update the
-Terraform-managed App Runner service.
+Terraform-managed ECS Express service.
+
+Migration note
+--------------
+
+Older revisions of this template used AWS App Runner. This template now
+targets Amazon ECS Express Mode instead. Existing App Runner consumers
+should treat that as a runtime migration rather than an in-place minor
+upgrade.
 
 If the S3 backend refuses to use your AWS CLI profile during `tofu init`,
 see the troubleshooting note in [`infra/INFRA.md`](infra/INFRA.md).
@@ -131,7 +139,7 @@ Phase 2 requires real AWS access. Before running it, make sure you have:
 - an AWS profile or exported AWS credentials with permission to:
   - create/update/destroy the template resources
   - push to ECR
-  - read App Runner service state
+  - read ECS Express service state
 - a Terraform state bucket in `TF_STATE_BUCKET`
 - `GITHUB_OWNER` set for the target GitHub namespace
 - the target GitHub repo name available either from `GITHUB_REPO` or from
@@ -174,7 +182,7 @@ Current behavior of `run`:
 - forwards GitHub provider auth into isolated Terraform via `TF_VAR_github_token`
 - applies foundation infrastructure
 - publishes the bootstrap fixture image
-- applies again to create/update App Runner
+- applies again to create/update ECS Express Mode
 - fetches the service URL
 - verifies the public fixture response
 - destroys the isolated stack on success
@@ -217,7 +225,7 @@ Assumptions
 -----------
 
 - application code and `Dockerfile` live in the repository root
-- deployment targets a public HTTP service on AWS App Runner
+- deployment targets a public HTTP service on Amazon ECS Express Mode
 - GitHub Actions is the CI/CD system
 - Terraform/OpenTofu manages the shared deployment infrastructure
 - Terraform manages the GitHub Actions secrets and variables used by CI
@@ -226,8 +234,9 @@ Assumptions
 Scope
 -----
 
-This template deliberately avoids ECS, ALB, VPC networking, DNS, and
-multi-environment promotion. It is meant to be the smallest AWS delivery
-setup that still gives a real commit-to-deploy path.
+This template deliberately avoids hand-rolled ECS clusters, custom ALB
+plumbing, DNS, and multi-environment promotion. It is meant to be the
+smallest AWS delivery setup that still gives a real commit-to-deploy
+path.
 
 License: MIT

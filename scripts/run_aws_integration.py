@@ -81,6 +81,7 @@ class AwsIntegrationRunner:
         self.metadata_path: Path | None = None
         self.verify_response_path: Path | None = None
         self.remote_image_uri = ""
+        self.service_arn_value = ""
 
         self.github_repo_value = ""
         self.github_token_value = ""
@@ -525,6 +526,15 @@ Environment overrides:
             raise RunnerError(f"Preserved integration metadata run_id {run_id} does not match AWS_INTEGRATION_RUN_ID {self.run_id}.")
         return data
 
+    def update_metadata(self, **updates: Any) -> None:
+        if not self.metadata_path:
+            return
+        metadata: dict[str, Any] = {}
+        if self.metadata_path.exists():
+            metadata = json.loads(self.metadata_path.read_text(encoding="utf-8"))
+        metadata.update(updates)
+        self.metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+
     def materialize_config(self) -> None:
         self.fail_if_simulated("config-materialization")
         assert self.workdir is not None
@@ -566,6 +576,9 @@ Environment overrides:
                 self.github_oidc_provider_arn_value = arn
             if "manage_github_oidc_provider" not in metadata and arn:
                 self.manage_github_oidc_provider = False
+            service_arn = metadata.get("service_arn")
+            if service_arn:
+                self.service_arn_value = service_arn
 
         try:
             github_repo_placeholder = self.resolve_github_repo_value()
@@ -610,7 +623,7 @@ Environment overrides:
                     "",
                     f'aws_region          = "{aws_region_placeholder}"',
                     f'service_name        = "{self.service_name}"',
-                    f'apprunner_image_tag = "{self.image_tag}"',
+                    f'ecs_express_image_tag = "{self.image_tag}"',
                     "ecr_force_delete    = true",
                     f'github_owner        = "{github_owner_placeholder}"',
                     f'github_repo         = "{github_repo_placeholder}"',
@@ -645,6 +658,7 @@ Environment overrides:
             "github_repo": github_repo_placeholder,
             "manage_github_oidc_provider": self.manage_github_oidc_provider,
             "github_oidc_provider_arn": self.github_oidc_provider_arn_value or None,
+            "service_arn": self.service_arn_value or None,
             "tfvars_path": str(self.tfvars_path),
             "backend_config_path": str(self.backend_config_path),
         }
@@ -726,13 +740,14 @@ Environment overrides:
         self.run_cmd(["docker", "push", self.remote_image_uri])
 
     def fetch_service_url(self) -> str:
-        self.log_step("url-fetch", "Resolving App Runner service URL")
+        self.log_step("url-fetch", "Resolving ECS Express service URL")
         self.fail_if_simulated("url-fetch")
         assert self.workdir is not None
         tofu_error_log = self.workdir / "tofu-service-url.stderr.log"
         aws_error_log = self.workdir / "aws-service-url.stderr.log"
         tofu_init_failure = ""
         service_url = ""
+        service_arn = self.service_arn_value
         try:
             self.run_isolated_tofu_init()
         except RunnerError as exc:
@@ -740,6 +755,18 @@ Environment overrides:
             print(f"-- url-fetch: tofu init failed, falling back to AWS CLI lookup: {exc.message}", file=sys.stderr)
             tofu_error_log.write_text(f"{tofu_init_failure}\n", encoding="utf-8")
         else:
+            service_arn_output = subprocess.run(
+                ["tofu", "output", "-raw", "ecs_express_service_arn"],
+                cwd=self.infra_dir,
+                env=self.terraform_env(),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            if service_arn_output.returncode == 0 and service_arn_output.stdout.strip():
+                service_arn = service_arn_output.stdout.strip()
+                self.service_arn_value = service_arn
+                self.update_metadata(service_arn=service_arn)
             tofu_output = subprocess.run(
                 ["tofu", "output", "-raw", "service_url"],
                 cwd=self.infra_dir,
@@ -756,15 +783,18 @@ Environment overrides:
 
         self.require_command("aws")
         self.require_materialized_value("AWS_REGION", os.environ.get("AWS_REGION"))
+        self.require_materialized_value("ECS Express service ARN", service_arn)
         aws_output = subprocess.run(
             [
                 "aws",
-                "apprunner",
-                "list-services",
+                "ecs",
+                "describe-express-gateway-service",
                 "--region",
                 os.environ["AWS_REGION"],
+                "--service-arn",
+                service_arn,
                 "--query",
-                f"ServiceSummaryList[?ServiceName=='{self.service_name}'].ServiceUrl | [0]",
+                "service.activeConfigurations[0].ingressPaths[?accessType=='PUBLIC'].endpoint | [0]",
                 "--output",
                 "text",
             ],
@@ -777,11 +807,11 @@ Environment overrides:
         if service_url and service_url != "None":
             return service_url
 
-        message = "Unable to determine App Runner service URL after second apply."
+        message = "Unable to determine ECS Express service URL after second apply."
         if tofu_error_log.stat().st_size:
             message += f"\ntofu output stderr saved to {tofu_error_log}"
         if aws_error_log.stat().st_size:
-            message += f"\naws apprunner list-services stderr saved to {aws_error_log}"
+            message += f"\naws ecs describe-express-gateway-service stderr saved to {aws_error_log}"
         raise RunnerError(message)
 
     def run_second_apply(self) -> None:
@@ -962,10 +992,10 @@ Readiness check before any AWS call:
 3. Publish the bootstrap image to ECR repository {self.ecr_repository_name} using tag {self.image_tag}.
    ./scripts/run-aws-integration.sh bootstrap-publish
 
-4. Run the second apply so Terraform can create the App Runner service:
+4. Run the second apply so Terraform can create the ECS Express service:
    ./scripts/run-aws-integration.sh second-apply
 
-5. Fetch the App Runner service URL and verify the public fixture response.
+5. Fetch the ECS Express service URL and verify the public fixture response.
    ./scripts/run-aws-integration.sh verify
 
 6. Destroy the isolated integration stack and remove temp artifacts:

@@ -18,19 +18,19 @@ class OwnershipContractsTest(unittest.TestCase):
         cls.readme_text = README_PATH.read_text(encoding="utf-8")
         cls.deployment_doc_text = DEPLOYMENT_DOC_PATH.read_text(encoding="utf-8")
 
-    def test_terraform_owns_app_runner_service(self) -> None:
-        self.assertIn('resource "aws_apprunner_service" "service"', self.main_tf_text)
+    def test_terraform_owns_ecs_express_service(self) -> None:
+        self.assertIn('resource "aws_cloudformation_stack" "ecs_express_service"', self.main_tf_text)
+        self.assertIn("AWS::ECS::ExpressGatewayService", self.main_tf_text)
+        self.assertIn('ignore_changes = [parameters["ImageUri"]]', self.main_tf_text)
 
-    def test_app_runner_image_drift_is_ignored_after_bootstrap(self) -> None:
-        self.assertIn(
-            "ignore_changes = [source_configuration[0].image_repository[0].image_identifier]",
-            self.main_tf_text,
-        )
+    def test_github_actions_updates_ecs_express_service_directly(self) -> None:
+        self.assertIn("aws ecs update-express-gateway-service", self.workflow_text)
+        self.assertIn("AWS_ECS_EXPRESS_SERVICE_ARN", self.workflow_text)
 
     def test_workflow_fails_when_runtime_service_is_missing(self) -> None:
-        self.assertIn('if [ "${SERVICE_ARN}" = "None" ]; then', self.workflow_text)
+        self.assertIn('if [ "${STATUS}" = "None" ] || [ -z "${STATUS}" ]; then', self.workflow_text)
         self.assertIn(
-            "App Runner service ${AWS_APP_RUNNER_SERVICE_NAME} does not exist. Run tofu apply after the bootstrap image is available.",
+            "ECS Express service ${AWS_ECS_EXPRESS_SERVICE_ARN} does not exist. Run tofu apply after the bootstrap image is available.",
             self.workflow_text,
         )
 

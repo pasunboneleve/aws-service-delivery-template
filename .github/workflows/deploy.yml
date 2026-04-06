@@ -1,4 +1,4 @@
-name: Deploy to AWS App Runner
+name: Deploy to AWS ECS Express Mode
 
 on:
   push:
@@ -15,8 +15,8 @@ jobs:
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
       AWS_ECR_REPOSITORY: ${{ vars.AWS_ECR_REPOSITORY }}
-      AWS_APP_RUNNER_SERVICE_NAME: ${{ vars.AWS_APP_RUNNER_SERVICE_NAME }}
-      AWS_APP_RUNNER_PORT: ${{ vars.AWS_APP_RUNNER_PORT }}
+      AWS_ECS_EXPRESS_SERVICE_ARN: ${{ vars.AWS_ECS_EXPRESS_SERVICE_ARN }}
+      AWS_ECS_CONTAINER_PORT: ${{ vars.AWS_ECS_CONTAINER_PORT }}
 
     steps:
       - name: Check configuration
@@ -26,13 +26,8 @@ jobs:
             exit 1
           fi
 
-          if [ -z "${{ secrets.AWS_APP_RUNNER_ECR_ACCESS_ROLE_ARN }}" ]; then
-            echo "Configure the AWS_APP_RUNNER_ECR_ACCESS_ROLE_ARN GitHub Actions secret before running CI."
-            exit 1
-          fi
-
-          if [ -z "${{ vars.AWS_REGION }}" ] || [ -z "${{ vars.AWS_ECR_REPOSITORY }}" ] || [ -z "${{ vars.AWS_APP_RUNNER_SERVICE_NAME }}" ] || [ -z "${{ vars.AWS_APP_RUNNER_PORT }}" ]; then
-            echo "Configure AWS_REGION, AWS_ECR_REPOSITORY, AWS_APP_RUNNER_SERVICE_NAME, and AWS_APP_RUNNER_PORT GitHub Actions variables before running CI."
+          if [ -z "${{ vars.AWS_REGION }}" ] || [ -z "${{ vars.AWS_ECR_REPOSITORY }}" ] || [ -z "${{ vars.AWS_ECS_CONTAINER_PORT }}" ]; then
+            echo "Configure AWS_REGION, AWS_ECR_REPOSITORY, and AWS_ECS_CONTAINER_PORT GitHub Actions variables before running CI."
             exit 1
           fi
 
@@ -67,33 +62,42 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Update App Runner service
+      - name: Update ECS Express service
         env:
           IMAGE_IDENTIFIER: ${{ steps.login-ecr.outputs.registry }}/${{ env.AWS_ECR_REPOSITORY }}:${{ github.sha }}
-          APP_RUNNER_PORT: ${{ env.AWS_APP_RUNNER_PORT }}
-          ECR_ACCESS_ROLE_ARN: ${{ secrets.AWS_APP_RUNNER_ECR_ACCESS_ROLE_ARN }}
+          ECS_CONTAINER_PORT: ${{ env.AWS_ECS_CONTAINER_PORT }}
         run: |
-          if [ -z "${APP_RUNNER_PORT}" ]; then
-            APP_RUNNER_PORT=8080
+          if [ -z "${ECS_CONTAINER_PORT}" ]; then
+            ECS_CONTAINER_PORT=8080
           fi
 
-          SERVICE_ARN=$(
-            aws apprunner list-services \
-              --query "ServiceSummaryList[?ServiceName=='${AWS_APP_RUNNER_SERVICE_NAME}'].ServiceArn | [0]" \
-              --output text
-          )
-
-          if [ "${SERVICE_ARN}" = "None" ]; then
-            echo "App Runner service ${AWS_APP_RUNNER_SERVICE_NAME} does not exist. Run tofu apply after the bootstrap image is available."
+          if [ -z "${AWS_ECS_EXPRESS_SERVICE_ARN}" ]; then
+            echo "ECS Express service ARN is not available yet. Run tofu apply after the bootstrap image is available."
             exit 1
           fi
 
-          aws apprunner update-service \
-            --service-arn "${SERVICE_ARN}" \
-            --source-configuration "AuthenticationConfiguration={AccessRoleArn=${ECR_ACCESS_ROLE_ARN}},AutoDeploymentsEnabled=false,ImageRepository={ImageIdentifier=${IMAGE_IDENTIFIER},ImageRepositoryType=ECR,ImageConfiguration={Port=${APP_RUNNER_PORT}}}"
+          STATUS=$(
+            aws ecs describe-express-gateway-service \
+              --service-arn "${AWS_ECS_EXPRESS_SERVICE_ARN}" \
+              --query 'service.status.statusCode' \
+              --output text || true
+          )
+
+          if [ "${STATUS}" = "None" ] || [ -z "${STATUS}" ]; then
+            echo "ECS Express service ${AWS_ECS_EXPRESS_SERVICE_ARN} does not exist. Run tofu apply after the bootstrap image is available."
+            exit 1
+          fi
+
+          aws ecs update-express-gateway-service \
+            --service-arn "${AWS_ECS_EXPRESS_SERVICE_ARN}" \
+            --primary-container "image=${IMAGE_IDENTIFIER},containerPort=${ECS_CONTAINER_PORT}"
 
       - name: Show service URL
         run: |
-          aws apprunner list-services \
-            --query "ServiceSummaryList[?ServiceName=='${AWS_APP_RUNNER_SERVICE_NAME}'].ServiceUrl | [0]" \
-            --output text
+          aws ecs describe-express-gateway-service \
+            --service-arn "${AWS_ECS_EXPRESS_SERVICE_ARN}" \
+            --query "service.activeConfigurations[0].ingressPaths[?accessType=='PUBLIC'].endpoint | [0]" \
+            --output text || {
+              echo "ECS Express service ${AWS_ECS_EXPRESS_SERVICE_ARN} is not available. Run tofu apply after the bootstrap image is available."
+              exit 1
+            }

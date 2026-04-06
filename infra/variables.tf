@@ -1,10 +1,10 @@
 variable "aws_region" {
-  description = "AWS region used for ECR, App Runner, and Terraform state."
+  description = "AWS region used for ECR, ECS Express Mode, and Terraform state."
   type        = string
 }
 
 variable "service_name" {
-  description = "Base service name used for the ECR repository and App Runner service."
+  description = "Base service name used for the ECR repository and ECS Express service."
   type        = string
 }
 
@@ -60,7 +60,7 @@ variable "github_repo_visibility" {
 }
 
 variable "github_token" {
-  description = "Optional GitHub Personal Access Token with repo scope for managing Actions secrets."
+  description = "Optional GitHub Personal Access Token with repo scope for managing Actions secrets and variables."
   type        = string
   sensitive   = true
   default     = null
@@ -84,20 +84,50 @@ variable "ecr_force_delete" {
   default     = false
 }
 
-variable "apprunner_cpu" {
-  description = "App Runner CPU size per instance."
+variable "ecs_express_cpu" {
+  description = "CPU units for the ECS Express service task. Default 256 = 0.25 vCPU."
   type        = string
-  default     = "0.25 vCPU"
+  default     = "256"
 }
 
-variable "apprunner_memory" {
-  description = "App Runner memory size per instance. This is RAM, not container disk."
+variable "ecs_express_memory" {
+  description = "Memory for the ECS Express service task in MiB. Default 512 = 0.5 GB RAM."
   type        = string
-  default     = "0.5 GB"
+  default     = "512"
 }
 
-variable "apprunner_image_tag" {
-  description = "Container image tag Terraform should use when creating or recreating the App Runner service."
+variable "ecs_express_image_tag" {
+  description = "Container image tag Terraform should use when creating or recreating the ECS Express service."
   type        = string
   default     = "latest"
+}
+
+variable "health_check_path" {
+  description = "Health check path for the ECS Express service."
+  type        = string
+  default     = "/"
+}
+
+variable "ecs_express_min_task_count" {
+  description = "Minimum running task count for the ECS Express service."
+  type        = number
+  default     = 1
+}
+
+variable "ecs_express_max_task_count" {
+  description = "Maximum running task count for the ECS Express service."
+  type        = number
+  default     = 2
+}
+
+variable "ecs_express_scaling_metric" {
+  description = "Autoscaling metric used by ECS Express Mode."
+  type        = string
+  default     = "AVERAGE_CPU"
+}
+
+variable "ecs_express_scaling_target_value" {
+  description = "Target value for the ECS Express autoscaling metric."
+  type        = number
+  default     = 60
 }
