@@ -101,7 +101,13 @@ class AwsIntegrationRunner:
         return cleaned or "integration-run"
 
     def _trim_name(self, value: str) -> str:
-        return value[:40]
+        if len(value) <= 40:
+            return value
+        import hashlib
+
+        h = hashlib.sha256(value.encode()).hexdigest()[:8]
+        # Keep 15 from start, 14 from end, and 8 for hash plus 2 hyphens = 39 or 40
+        return f"{value[:15]}-{h}-{value[-14:]}"[:40]
 
     def usage(self) -> str:
         return """Usage:
