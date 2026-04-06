@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [v0.3.0] - 2026-04-06
+
 ### Changed
 
 - Migrated the AWS runtime template from AWS App Runner to Amazon ECS Express Mode.
