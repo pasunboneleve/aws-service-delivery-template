@@ -787,6 +787,38 @@ class IntegrationRunnerPreflightTest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("\x1b[31m[destroy]\x1b[0m Integration runner failed with exit code 1.", result.stderr)
 
+    def test_destroy_streams_live_tofu_output_to_stderr_and_log(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workdir = Path(temp_dir) / "workdir"
+            workdir.mkdir()
+            (workdir / "integration-metadata.json").write_text(
+                json.dumps({"run_id": "destroy-run", "github_repo": "repo-from-metadata"}),
+                encoding="utf-8",
+            )
+            result = self._run_mode(
+                mode="destroy",
+                extra_env={
+                    "AWS_REGION": "ap-southeast-2",
+                    "TF_STATE_BUCKET": "example-bucket",
+                    "GITHUB_OWNER": "example-owner",
+                    "AWS_INTEGRATION_RUN_ID": "destroy-run",
+                    "AWS_INTEGRATION_WORKDIR": str(workdir),
+                },
+                tofu_script=(
+                    "#!/usr/bin/env bash\n"
+                    "if [ \"$1\" = 'destroy' ]; then\n"
+                    "  printf '%s\\n' 'aws_cloudformation_stack.ecs_express_service[0]: Still destroying... [10s elapsed]'\n"
+                    "  exit 0\n"
+                    "fi\n"
+                    "exit 0\n"
+                ),
+            )
+
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("Still destroying... [10s elapsed]", result.stderr)
+            destroy_log = (workdir / "destroy.log").read_text(encoding="utf-8")
+            self.assertIn("Still destroying... [10s elapsed]", destroy_log)
+
     def _run_preflight(
         self,
         extra_env: dict[str, str],

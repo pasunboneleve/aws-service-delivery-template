@@ -4,11 +4,13 @@ from __future__ import annotations
 import json
 import os
 import re
+import selectors
 import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -232,23 +234,55 @@ Environment overrides:
         cmd: list[str],
         cwd: Path | None = None,
         env: dict[str, str] | None = None,
+        stream_output: bool = False,
     ) -> int:
         with logfile.open("a", encoding="utf-8") as handle:
+            process = subprocess.Popen(
+                cmd,
+                cwd=cwd,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+            selector = selectors.DefaultSelector()
             try:
-                completed = subprocess.run(
-                    cmd,
-                    cwd=cwd,
-                    env=env,
-                    stdout=handle,
-                    stderr=subprocess.STDOUT,
-                    check=False,
-                    text=True,
-                    timeout=timeout_seconds,
-                )
-            except subprocess.TimeoutExpired:
-                print(f"Timed out after {timeout_seconds}s: {' '.join(cmd)}", file=handle)
-                return 124
-        return completed.returncode
+                assert process.stdout is not None
+                selector.register(process.stdout, selectors.EVENT_READ)
+                deadline = time.monotonic() + timeout_seconds
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        process.kill()
+                        process.wait()
+                        timeout_message = f"Timed out after {timeout_seconds}s: {' '.join(cmd)}\n"
+                        handle.write(timeout_message)
+                        handle.flush()
+                        if stream_output:
+                            print(timeout_message, end="", file=sys.stderr)
+                        return 124
+
+                    events = selector.select(timeout=min(1.0, remaining))
+                    for key, _ in events:
+                        line = key.fileobj.readline()
+                        if not line:
+                            continue
+                        handle.write(line)
+                        handle.flush()
+                        if stream_output:
+                            print(line, end="", file=sys.stderr)
+
+                    if process.poll() is not None:
+                        for line in process.stdout.readlines():
+                            handle.write(line)
+                            handle.flush()
+                            if stream_output:
+                                print(line, end="", file=sys.stderr)
+                        break
+            finally:
+                selector.close()
+            return process.returncode
 
     def run_cmd(
         self,
@@ -932,6 +966,7 @@ Environment overrides:
                 destroy_cmd,
                 cwd=self.infra_dir,
                 env=self.terraform_env(),
+                stream_output=True,
             )
             if rc != 0:
                 raise RunnerError(f"Destroy failed with exit code {rc}", rc)
