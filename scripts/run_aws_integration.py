@@ -67,7 +67,12 @@ class AwsIntegrationRunner:
         self.run_id = self._slugify(run_id_raw)
         self.workdir = Path(os.environ["AWS_INTEGRATION_WORKDIR"]) if os.environ.get("AWS_INTEGRATION_WORKDIR") else None
         self.keep_workdir = os.environ.get("AWS_INTEGRATION_KEEP_WORKDIR", "0")
-        self.cleanup_timeout_seconds = int(os.environ.get("AWS_INTEGRATION_CLEANUP_TIMEOUT_SECONDS", "900"))
+        cleanup_timeout_raw = os.environ.get("AWS_INTEGRATION_CLEANUP_TIMEOUT_SECONDS", "").strip()
+        if cleanup_timeout_raw:
+            cleanup_timeout_value = int(cleanup_timeout_raw)
+            self.cleanup_timeout_seconds: int | None = cleanup_timeout_value if cleanup_timeout_value > 0 else None
+        else:
+            self.cleanup_timeout_seconds = None
         self.simulated_failure_steps = {
             step.strip() for step in os.environ.get("AWS_INTEGRATION_SIMULATE_FAILURE_AT", "").split(",") if step.strip()
         }
@@ -152,7 +157,8 @@ Environment overrides:
   AWS_INTEGRATION_AWS_ACCOUNT_ID
                                Override the AWS account id instead of querying STS
   AWS_INTEGRATION_CLEANUP_TIMEOUT_SECONDS
-                               Timeout in seconds for cleanup destroy (default: 300)
+                               Optional timeout in seconds for cleanup destroy.
+                               Unset or 0 waits indefinitely.
   AWS_INTEGRATION_SIMULATE_FAILURE_AT
                                Comma-separated step ids to fail locally:
                                config-materialization,first-tofu-apply,
@@ -230,7 +236,7 @@ Environment overrides:
 
     def run_with_timeout(
         self,
-        timeout_seconds: int,
+        timeout_seconds: int | None,
         logfile: Path,
         cmd: list[str],
         cwd: Path | None = None,
@@ -259,10 +265,10 @@ Environment overrides:
 
                 reader_thread = threading.Thread(target=reader, daemon=True)
                 reader_thread.start()
-                deadline = time.monotonic() + timeout_seconds
+                deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
                 while True:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
+                    remaining = None if deadline is None else deadline - time.monotonic()
+                    if remaining is not None and remaining <= 0:
                         process.kill()
                         process.wait()
                         reader_thread.join(timeout=1)
@@ -273,8 +279,9 @@ Environment overrides:
                             print(timeout_message, end="", file=sys.stderr)
                         return 124
 
+                    poll_timeout = 1.0 if remaining is None else max(0.0, min(1.0, remaining))
                     try:
-                        line = output_queue.get(timeout=min(1.0, remaining))
+                        line = output_queue.get(timeout=poll_timeout)
                     except queue.Empty:
                         if process.poll() is not None:
                             reader_thread.join(timeout=1)
@@ -948,6 +955,10 @@ Environment overrides:
         self.note(f"Infra dir: {self.infra_dir}")
         self.note(f"Backend config: {self.backend_config_path}")
         self.note(f"Vars file: {self.tfvars_path}")
+        if self.cleanup_timeout_seconds is None:
+            self.note("Destroy timeout: disabled; waiting for AWS to finish")
+        else:
+            self.note(f"Destroy timeout: {self.cleanup_timeout_seconds}s")
         if destroy_reason == "manual" and not self.run_id_explicit:
             raise RunnerError("Manual destroy requires an explicit AWS_INTEGRATION_RUN_ID so the runner does not guess which isolated stack to tear down.")
         self.fail_if_simulated("destroy")

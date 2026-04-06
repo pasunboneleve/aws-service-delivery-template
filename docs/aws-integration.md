@@ -166,7 +166,7 @@ Environment variables used by the skeleton:
 - `AWS_INTEGRATION_KEEP_WORKDIR=1`
   keep generated files after the runner exits
 - `AWS_INTEGRATION_CLEANUP_TIMEOUT_SECONDS`
-  bound the failure cleanup destroy duration (default: `900`)
+  optional timeout for cleanup destroy; unset or `0` waits indefinitely
 - `AWS_INTEGRATION_SIMULATE_FAILURE_AT`
   inject local failures into one or more steps for cleanup testing
 
@@ -197,7 +197,9 @@ Failure handling behavior:
   failure
 - if cleanup also fails, that is reported as a secondary failure and does not
   mask the original exit
-- cleanup destroy is bounded by `AWS_INTEGRATION_CLEANUP_TIMEOUT_SECONDS`
+- cleanup destroy waits indefinitely by default
+- if `AWS_INTEGRATION_CLEANUP_TIMEOUT_SECONDS` is set to a positive value,
+  cleanup destroy is bounded by that timeout
 - when cleanup fails or times out, the runner prints the exact manual destroy
   command for the preserved run id/workdir
 - generated integration workdirs are preserved after failures so cleanup logs
