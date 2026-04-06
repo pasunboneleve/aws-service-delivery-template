@@ -31,7 +31,7 @@ data "aws_iam_policy_document" "github_oidc_assume_role" {
 
     principals {
       type        = "Federated"
-      identifiers = compact([local.github_oidc_provider_arn])
+      identifiers = [local.github_oidc_provider_arn]
     }
 
     condition {

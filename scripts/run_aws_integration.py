@@ -188,11 +188,12 @@ Environment overrides:
             return
         shutil.rmtree(self.workdir, ignore_errors=True)
 
-    def run_with_timeout(self, timeout_seconds: int, logfile: Path, cmd: list[str]) -> int:
+    def run_with_timeout(self, timeout_seconds: int, logfile: Path, cmd: list[str], cwd: Path | None = None) -> int:
         with logfile.open("a", encoding="utf-8") as handle:
             try:
                 completed = subprocess.run(
                     cmd,
+                    cwd=cwd,
                     stdout=handle,
                     stderr=subprocess.STDOUT,
                     check=False,
@@ -711,7 +712,7 @@ Environment overrides:
                 check=False,
             )
             if init_proc.returncode != 0:
-                raise RunnerError(f"Tofu init for destroy failed with exit code {init_proc.returncode}")
+                raise RunnerError(f"Tofu init for destroy failed with exit code {init_proc.returncode}", init_proc.returncode)
 
             destroy_cmd = [
                 "tofu",
@@ -721,7 +722,7 @@ Environment overrides:
             if auto_approve:
                 destroy_cmd.append("-auto-approve")
 
-            rc = self.run_with_timeout(self.cleanup_timeout_seconds, self.tofu_destroy_log_path, destroy_cmd)
+            rc = self.run_with_timeout(self.cleanup_timeout_seconds, self.tofu_destroy_log_path, destroy_cmd, cwd=self.infra_dir)
             if rc != 0:
                 raise RunnerError(f"Destroy failed with exit code {rc}", rc)
 
