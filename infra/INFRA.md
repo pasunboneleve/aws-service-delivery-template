@@ -66,6 +66,10 @@ Useful outputs include:
 - `app_runner_service_arn`
 - `service_url`
 
+The default App Runner sizing is intentionally small for a template:
+`0.25 vCPU` and `0.5 GB` memory per instance. That `0.5 GB` value is
+RAM, not container disk.
+
 If `service_url` is `null`, the configured bootstrap tag does not exist in ECR yet. Push one image to `main`, rerun `tofu apply`, then update the README:
 
 ```bash

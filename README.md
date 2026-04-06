@@ -70,6 +70,10 @@ tofu init \
 tofu apply
 ```
 
+By default the template keeps App Runner small and cheap: `0.25 vCPU`
+and `0.5 GB` memory per instance. That memory setting is RAM, not
+container disk.
+
 5. Add your application code and `Dockerfile`.
 6. Push to `main` once so GitHub Actions publishes the bootstrap `latest` image to ECR.
 7. Run `tofu apply` again so Terraform can create the App Runner service from that image.
@@ -132,6 +136,8 @@ Phase 2 requires real AWS access. Before running it, make sure you have:
 - `GITHUB_OWNER` set for the target GitHub namespace
 - the target GitHub repo name available either from `GITHUB_REPO` or from
   `git remote origin`
+- GitHub provider auth available via `GITHUB_TOKEN`, `TF_VAR_github_token`,
+  or `github_token` in `infra/prod.tfvars`
 
 Recommended environment:
 
@@ -140,6 +146,7 @@ export AWS_PROFILE=your-profile
 export AWS_REGION=ap-southeast-2
 export TF_STATE_BUCKET=your-tf-state-bucket
 export GITHUB_OWNER=your-github-owner
+export GITHUB_TOKEN=your-github-token
 direnv reload
 ```
 
@@ -164,12 +171,14 @@ To run the current end-to-end AWS integration lane on demand:
 Current behavior of `run`:
 
 - creates an isolated integration workdir and backend key
+- forwards GitHub provider auth into isolated Terraform via `TF_VAR_github_token`
 - applies foundation infrastructure
 - publishes the bootstrap fixture image
 - applies again to create/update App Runner
 - fetches the service URL
 - verifies the public fixture response
 - destroys the isolated stack on success
+- force-deletes the ephemeral integration ECR repository on teardown so pushed fixture images do not block cleanup
 - if a destructive step fails, attempts cleanup destroy automatically
 
 To manually destroy a prior isolated run:

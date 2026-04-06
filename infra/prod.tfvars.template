@@ -19,5 +19,5 @@ github_branch           = "main"
 # github_token          = "ghp_xxx" # Or prefer exporting GITHUB_TOKEN in your shell
 # apprunner_image_tag   = "latest"
 # image_port            = 8080
-# apprunner_cpu         = "1 vCPU"
-# apprunner_memory      = "2 GB"
+# apprunner_cpu         = "0.25 vCPU"
+# apprunner_memory      = "0.5 GB" # RAM, not container disk

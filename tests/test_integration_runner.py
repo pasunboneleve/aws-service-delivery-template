@@ -1,8 +1,10 @@
 import os
 import json
+import socket
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -38,6 +40,25 @@ class IntegrationRunnerPreflightTest(unittest.TestCase):
             "ready: GitHub repo for integration runs is override-repo (via GITHUB_REPO)",
             result.stdout,
         )
+
+    def test_preflight_allows_env_only_github_auth_without_prod_tfvars(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = self._run_preflight(
+                extra_env={
+                    "AWS_REGION": "ap-southeast-2",
+                    "TF_STATE_BUCKET": "example-bucket",
+                    "GITHUB_OWNER": "example-owner",
+                    "GITHUB_REPO": "example-repo",
+                    "GITHUB_TOKEN": "ghs_env_token",
+                    "AWS_PROFILE": "example-profile",
+                    "AWS_INTEGRATION_PROD_TFVARS_PATH": str(Path(temp_dir) / "missing-prod.tfvars"),
+                },
+            )
+
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("ready: GitHub provider auth is configured via GITHUB_TOKEN", result.stdout)
+            self.assertIn("note:", result.stdout)
+            self.assertNotIn("missing: ", result.stdout)
 
     def test_preflight_reports_missing_repo_when_origin_cannot_be_derived(self) -> None:
         result = self._run_preflight(
@@ -113,6 +134,128 @@ class IntegrationRunnerPreflightTest(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Missing required integration input: GITHUB_REPO", result.stderr)
+
+    def test_foundation_apply_passes_github_token_from_environment_to_tofu(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tofu_log = Path(temp_dir) / "tofu.log"
+            result = self._run_mode(
+                mode="foundation-apply",
+                extra_env={
+                    "AWS_REGION": "ap-southeast-2",
+                    "TF_STATE_BUCKET": "example-bucket",
+                    "GITHUB_OWNER": "example-owner",
+                    "GITHUB_REPO": "example-repo",
+                    "GITHUB_TOKEN": "ghs_env_token",
+                    "AWS_INTEGRATION_ALLOW_OIDC_PROBE_FALLBACK": "1",
+                },
+                tofu_script=(
+                    "#!/usr/bin/env bash\n"
+                    f"printf '%s\\n' \"$TF_VAR_github_token|$*\" >> '{tofu_log}'\n"
+                    "exit 0\n"
+                ),
+                aws_script=(
+                    "#!/usr/bin/env bash\n"
+                    "printf '%s\\n' 'simulated iam permission failure' >&2\n"
+                    "exit 255\n"
+                ),
+            )
+
+            self.assertEqual(result.returncode, 0)
+            tofu_lines = tofu_log.read_text(encoding="utf-8")
+            self.assertIn("ghs_env_token|init -reconfigure", tofu_lines)
+            self.assertIn("ghs_env_token|apply -auto-approve", tofu_lines)
+
+    def test_foundation_apply_passes_github_token_from_prod_tfvars_to_tofu(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tofu_log = Path(temp_dir) / "tofu.log"
+            prod_tfvars_path = Path(temp_dir) / "prod.tfvars"
+            prod_tfvars_path.write_text('github_token = "ghs_from_tfvars"\n', encoding="utf-8")
+            result = self._run_mode(
+                mode="foundation-apply",
+                extra_env={
+                    "AWS_REGION": "ap-southeast-2",
+                    "TF_STATE_BUCKET": "example-bucket",
+                    "GITHUB_OWNER": "example-owner",
+                    "GITHUB_REPO": "example-repo",
+                    "AWS_INTEGRATION_ALLOW_OIDC_PROBE_FALLBACK": "1",
+                    "AWS_INTEGRATION_PROD_TFVARS_PATH": str(prod_tfvars_path),
+                },
+                tofu_script=(
+                    "#!/usr/bin/env bash\n"
+                    f"printf '%s\\n' \"$TF_VAR_github_token|$*\" >> '{tofu_log}'\n"
+                    "exit 0\n"
+                ),
+                aws_script=(
+                    "#!/usr/bin/env bash\n"
+                    "printf '%s\\n' 'simulated iam permission failure' >&2\n"
+                    "exit 255\n"
+                ),
+            )
+
+            self.assertEqual(result.returncode, 0)
+            tofu_lines = tofu_log.read_text(encoding="utf-8")
+            self.assertIn("ghs_from_tfvars|init -reconfigure", tofu_lines)
+            self.assertIn("ghs_from_tfvars|apply -auto-approve", tofu_lines)
+
+    def test_foundation_apply_passes_github_token_from_heredoc_prod_tfvars_to_tofu(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tofu_log = Path(temp_dir) / "tofu.log"
+            prod_tfvars_path = Path(temp_dir) / "prod.tfvars"
+            prod_tfvars_path.write_text(
+                "github_token = <<EOF\r\n"
+                "ghs_from_heredoc\r\n"
+                "EOF\r\n"
+                "// trailing comment style should not matter elsewhere\r\n",
+                encoding="utf-8",
+            )
+            result = self._run_mode(
+                mode="foundation-apply",
+                extra_env={
+                    "AWS_REGION": "ap-southeast-2",
+                    "TF_STATE_BUCKET": "example-bucket",
+                    "GITHUB_OWNER": "example-owner",
+                    "GITHUB_REPO": "example-repo",
+                    "AWS_INTEGRATION_ALLOW_OIDC_PROBE_FALLBACK": "1",
+                    "AWS_INTEGRATION_PROD_TFVARS_PATH": str(prod_tfvars_path),
+                },
+                tofu_script=(
+                    "#!/usr/bin/env bash\n"
+                    f"printf '%s\\n' \"$TF_VAR_github_token|$*\" >> '{tofu_log}'\n"
+                    "exit 0\n"
+                ),
+                aws_script=(
+                    "#!/usr/bin/env bash\n"
+                    "printf '%s\\n' 'simulated iam permission failure' >&2\n"
+                    "exit 255\n"
+                ),
+            )
+
+            self.assertEqual(result.returncode, 0)
+            tofu_lines = tofu_log.read_text(encoding="utf-8")
+            self.assertIn("ghs_from_heredoc|init -reconfigure", tofu_lines)
+            self.assertIn("ghs_from_heredoc|apply -auto-approve", tofu_lines)
+
+    def test_preflight_accepts_double_quoted_prod_tfvars_with_slash_comments(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            prod_tfvars_path = Path(temp_dir) / "prod.tfvars"
+            prod_tfvars_path.write_text(
+                "// integration auth token\r\n"
+                'github_token = "ghs_from_comment_style" // trailing comment\r\n',
+                encoding="utf-8",
+            )
+            result = self._run_preflight(
+                extra_env={
+                    "AWS_REGION": "ap-southeast-2",
+                    "TF_STATE_BUCKET": "example-bucket",
+                    "GITHUB_OWNER": "example-owner",
+                    "GITHUB_REPO": "example-repo",
+                    "AWS_PROFILE": "example-profile",
+                    "AWS_INTEGRATION_PROD_TFVARS_PATH": str(prod_tfvars_path),
+                },
+            )
+
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("ready: GitHub provider auth is configured via", result.stdout)
 
     def test_destroy_requires_preserved_workdir_for_original_settings(self) -> None:
         result = self._run_mode(
@@ -222,6 +365,7 @@ class IntegrationRunnerPreflightTest(unittest.TestCase):
             tfvars = (workdir / "integration.tfvars").read_text(encoding="utf-8")
             self.assertIn('github_repo         = "repo-from-metadata"', tfvars)
             self.assertIn("manage_github_oidc_provider = false", tfvars)
+            self.assertIn("ecr_force_delete    = true", tfvars)
 
     def test_destroy_old_metadata_falls_back_to_env_repo_and_default_oidc_management(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -412,7 +556,221 @@ class IntegrationRunnerPreflightTest(unittest.TestCase):
             backend = (workdir / "backend.hcl").read_text(encoding="utf-8")
             self.assertIn('service_name        = "original-service"', tfvars)
             self.assertIn('apprunner_image_tag = "original-image-tag"', tfvars)
+            self.assertIn("ecr_force_delete    = true", tfvars)
             self.assertIn('key          = "original/state/key.tfstate"', backend)
+
+    def test_verify_reinitializes_isolated_backend_before_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workdir = Path(temp_dir) / "workdir"
+            workdir.mkdir()
+            (workdir / "integration-metadata.json").write_text(
+                json.dumps({"run_id": "verify-run", "github_repo": "repo-from-metadata"}),
+                encoding="utf-8",
+            )
+            tofu_log = Path(temp_dir) / "tofu.log"
+            with socket.socket() as sock:
+                sock.bind(("127.0.0.1", 0))
+                port = sock.getsockname()[1]
+            fixture_url = f"http://127.0.0.1:{port}"
+            server = subprocess.Popen(
+                [
+                    "python3",
+                    str(ROOT_DIR / "integration-fixture" / "server.py"),
+                ],
+                env={**os.environ, "PORT": str(port)},
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            try:
+                for _ in range(20):
+                    try:
+                        with socket.create_connection(("127.0.0.1", port), timeout=0.1):
+                            break
+                    except OSError:
+                        time.sleep(0.05)
+                        continue
+                else:
+                    self.fail(f"fixture server did not start listening on 127.0.0.1:{port}")
+                result = self._run_mode(
+                    mode="verify",
+                    extra_env={
+                        "AWS_REGION": "ap-southeast-2",
+                        "TF_STATE_BUCKET": "example-bucket",
+                        "GITHUB_OWNER": "example-owner",
+                        "AWS_INTEGRATION_RUN_ID": "verify-run",
+                        "AWS_INTEGRATION_WORKDIR": str(workdir),
+                    },
+                    tofu_script=(
+                        "#!/usr/bin/env bash\n"
+                        f"printf '%s\\n' \"$*\" >> '{tofu_log}'\n"
+                        "if [ \"$1\" = 'output' ]; then\n"
+                        f"  printf '%s\\n' '{fixture_url}'\n"
+                        "fi\n"
+                    ),
+                )
+            finally:
+                server.terminate()
+                server.wait(timeout=5)
+
+            self.assertEqual(result.returncode, 0)
+            tofu_lines = tofu_log.read_text(encoding="utf-8")
+            self.assertIn("init -reconfigure", tofu_lines)
+            self.assertIn("output -raw service_url", tofu_lines)
+
+    def test_verify_falls_back_to_aws_when_tofu_init_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workdir = Path(temp_dir) / "workdir"
+            workdir.mkdir()
+            (workdir / "integration-metadata.json").write_text(
+                json.dumps({"run_id": "verify-run", "github_repo": "repo-from-metadata"}),
+                encoding="utf-8",
+            )
+            with socket.socket() as sock:
+                sock.bind(("127.0.0.1", 0))
+                port = sock.getsockname()[1]
+            fixture_url = f"http://127.0.0.1:{port}"
+            server = subprocess.Popen(
+                [
+                    "python3",
+                    str(ROOT_DIR / "integration-fixture" / "server.py"),
+                ],
+                env={**os.environ, "PORT": str(port)},
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            try:
+                for _ in range(20):
+                    try:
+                        with socket.create_connection(("127.0.0.1", port), timeout=0.1):
+                            break
+                    except OSError:
+                        time.sleep(0.05)
+                        continue
+                else:
+                    self.fail(f"fixture server did not start listening on 127.0.0.1:{port}")
+                result = self._run_mode(
+                    mode="verify",
+                    extra_env={
+                        "AWS_REGION": "ap-southeast-2",
+                        "TF_STATE_BUCKET": "example-bucket",
+                        "GITHUB_OWNER": "example-owner",
+                        "AWS_INTEGRATION_RUN_ID": "verify-run",
+                        "AWS_INTEGRATION_WORKDIR": str(workdir),
+                    },
+                    tofu_script=(
+                        "#!/usr/bin/env bash\n"
+                        "if [ \"$1\" = 'init' ]; then\n"
+                        "  printf '%s\\n' 'simulated init failure' >&2\n"
+                        "  exit 1\n"
+                        "fi\n"
+                        "if [ \"$1\" = 'output' ]; then\n"
+                        "  printf '%s\\n' 'tofu output should not run after init failure' >&2\n"
+                        "  exit 99\n"
+                        "fi\n"
+                        "exit 1\n"
+                    ),
+                    aws_script=(
+                        "#!/usr/bin/env bash\n"
+                        "case \"$1 $2\" in\n"
+                        "  'apprunner list-services')\n"
+                        f"    printf '%s\\n' '{fixture_url}'\n"
+                        "    exit 0\n"
+                        "    ;;\n"
+                        "  *)\n"
+                        "    printf '%s\\n' 'unexpected aws command' >&2\n"
+                        "    exit 99\n"
+                        "    ;;\n"
+                        "esac\n"
+                    ),
+                )
+            finally:
+                server.terminate()
+                server.wait(timeout=5)
+
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("Fixture verification passed", result.stderr)
+            tofu_stderr_log = (workdir / "tofu-service-url.stderr.log").read_text(encoding="utf-8")
+            self.assertIn("Command failed: tofu init -reconfigure", tofu_stderr_log)
+            self.assertNotIn("tofu output should not run after init failure", tofu_stderr_log)
+
+    def test_failed_destroy_records_cleanup_failure_in_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workdir = Path(temp_dir) / "workdir"
+            workdir.mkdir()
+            (workdir / "integration-metadata.json").write_text(
+                json.dumps({"run_id": "destroy-run", "github_repo": "repo-from-metadata"}),
+                encoding="utf-8",
+            )
+            result = self._run_mode(
+                mode="destroy",
+                extra_env={
+                    "AWS_REGION": "ap-southeast-2",
+                    "TF_STATE_BUCKET": "example-bucket",
+                    "GITHUB_OWNER": "example-owner",
+                    "AWS_INTEGRATION_RUN_ID": "destroy-run",
+                    "AWS_INTEGRATION_WORKDIR": str(workdir),
+                    "AWS_INTEGRATION_SIMULATE_FAILURE_AT": "destroy",
+                },
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            summary = json.loads((workdir / "cleanup-status.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["cleanup_status"], "failed")
+            self.assertEqual(summary["primary_step"], "destroy")
+
+    def test_destroy_emits_green_label_on_success_when_color_forced(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workdir = Path(temp_dir) / "workdir"
+            workdir.mkdir()
+            (workdir / "integration-metadata.json").write_text(
+                json.dumps({"run_id": "destroy-run", "github_repo": "repo-from-metadata"}),
+                encoding="utf-8",
+            )
+            result = self._run_mode(
+                mode="destroy",
+                extra_env={
+                    "AWS_REGION": "ap-southeast-2",
+                    "TF_STATE_BUCKET": "example-bucket",
+                    "GITHUB_OWNER": "example-owner",
+                    "AWS_INTEGRATION_RUN_ID": "destroy-run",
+                    "AWS_INTEGRATION_WORKDIR": str(workdir),
+                    "AWS_INTEGRATION_FORCE_COLOR": "1",
+                },
+                tofu_script="#!/usr/bin/env bash\nexit 0\n",
+            )
+
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("\x1b[32m[destroy]\x1b[0m Destroy succeeded.", result.stderr)
+
+    def test_destroy_emits_red_label_on_failure_when_color_forced(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workdir = Path(temp_dir) / "workdir"
+            workdir.mkdir()
+            (workdir / "integration-metadata.json").write_text(
+                json.dumps({"run_id": "destroy-run", "github_repo": "repo-from-metadata"}),
+                encoding="utf-8",
+            )
+            result = self._run_mode(
+                mode="destroy",
+                extra_env={
+                    "AWS_REGION": "ap-southeast-2",
+                    "TF_STATE_BUCKET": "example-bucket",
+                    "GITHUB_OWNER": "example-owner",
+                    "AWS_INTEGRATION_RUN_ID": "destroy-run",
+                    "AWS_INTEGRATION_WORKDIR": str(workdir),
+                    "AWS_INTEGRATION_FORCE_COLOR": "1",
+                },
+                tofu_script=(
+                    "#!/usr/bin/env bash\n"
+                    "if [ \"$1\" = 'destroy' ]; then\n"
+                    "  exit 1\n"
+                    "fi\n"
+                    "exit 0\n"
+                ),
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("\x1b[31m[destroy]\x1b[0m Integration runner failed with exit code 1.", result.stderr)
 
     def _run_preflight(
         self,

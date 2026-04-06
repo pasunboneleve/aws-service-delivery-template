@@ -28,6 +28,11 @@ VALID_MODES = {
     "destroy",
 }
 
+COLOR_RESET = "\033[0m"
+COLOR_RED = "\033[31m"
+COLOR_GREEN = "\033[32m"
+COLOR_YELLOW = "\033[33m"
+
 
 class RunnerError(Exception):
     def __init__(self, message: str, exit_code: int = 1):
@@ -78,6 +83,7 @@ class AwsIntegrationRunner:
         self.remote_image_uri = ""
 
         self.github_repo_value = ""
+        self.github_token_value = ""
         self.manage_github_oidc_provider = True
         self.github_oidc_provider_arn_value = ""
 
@@ -89,6 +95,13 @@ class AwsIntegrationRunner:
         self.cleanup_exit_code = 0
         self.tofu_destroy_log_path: Path | None = None
         self.cleanup_status_path: Path | None = None
+        self.enable_color = os.environ.get("AWS_INTEGRATION_FORCE_COLOR") == "1" or sys.stderr.isatty()
+
+    def prod_tfvars_path(self) -> Path:
+        override = os.environ.get("AWS_INTEGRATION_PROD_TFVARS_PATH")
+        if override:
+            return Path(override)
+        return self.infra_dir / "prod.tfvars"
 
     def _default_run_id(self) -> str:
         import datetime
@@ -144,10 +157,19 @@ Environment overrides:
   AWS_INTEGRATION_VERIFY_PATH  HTTP path to verify (default: /)
 """
 
-    def log_step(self, step: str, message: str) -> None:
+    def colorize_step_label(self, step: str, color: str | None = None) -> str:
+        label = f"[{step}]"
+        if not color or not self.enable_color:
+            return label
+        return f"{color}{label}{COLOR_RESET}"
+
+    def emit_step_status(self, step: str, message: str, color: str | None = None) -> None:
+        print(f"==> {self.colorize_step_label(step, color)} {message}", file=sys.stderr)
+
+    def log_step(self, step: str, message: str, color: str | None = None) -> None:
         self.current_step = step
         print("", file=sys.stderr)
-        print(f"==> [{step}] {message}", file=sys.stderr)
+        self.emit_step_status(step, message, color)
 
     def note(self, message: str) -> None:
         print(f"-- {self.current_step}: {message}", file=sys.stderr)
@@ -194,12 +216,20 @@ Environment overrides:
             return
         shutil.rmtree(self.workdir, ignore_errors=True)
 
-    def run_with_timeout(self, timeout_seconds: int, logfile: Path, cmd: list[str], cwd: Path | None = None) -> int:
+    def run_with_timeout(
+        self,
+        timeout_seconds: int,
+        logfile: Path,
+        cmd: list[str],
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None,
+    ) -> int:
         with logfile.open("a", encoding="utf-8") as handle:
             try:
                 completed = subprocess.run(
                     cmd,
                     cwd=cwd,
+                    env=env,
                     stdout=handle,
                     stderr=subprocess.STDOUT,
                     check=False,
@@ -216,6 +246,7 @@ Environment overrides:
         cmd: list[str],
         *,
         cwd: Path | None = None,
+        env: dict[str, str] | None = None,
         capture_output: bool = False,
         check: bool = True,
         text: bool = True,
@@ -223,6 +254,7 @@ Environment overrides:
         completed = subprocess.run(
             cmd,
             cwd=str(cwd) if cwd else None,
+            env=env,
             capture_output=capture_output,
             check=False,
             text=text,
@@ -288,11 +320,15 @@ Environment overrides:
         return False
 
     def check_github_auth_from_prod_tfvars(self) -> bool:
-        prod_tfvars = self.infra_dir / "prod.tfvars"
-        if prod_tfvars.exists() and re.search(r"^[ \t]*github_token[ \t]*=", prod_tfvars.read_text(encoding="utf-8"), re.M):
-            print(f"ready: GitHub provider auth is configured via {self.infra_dir}/prod.tfvars")
+        try:
+            value = self.read_github_token_from_prod_tfvars()
+        except RunnerError as exc:
+            print(f"missing: {exc.message}")
+            return False
+        if value:
+            print(f"ready: GitHub provider auth is configured via {self.prod_tfvars_path()}")
             return True
-        print(f"missing: GitHub provider auth is not configured (add github_token to {self.infra_dir}/prod.tfvars)")
+        print(f"missing: GitHub provider auth is not configured (add github_token to {self.prod_tfvars_path()})")
         return False
 
     def check_github_repo_target(self) -> bool:
@@ -325,21 +361,30 @@ Environment overrides:
         if not self.check_aws_credentials_source():
             failures += 1
 
-        prod_tfvars = self.infra_dir / "prod.tfvars"
+        prod_tfvars = self.prod_tfvars_path()
         prod_tfvars_exists = prod_tfvars.exists()
+        github_auth_from_env = False
+        if os.environ.get("TF_VAR_github_token"):
+            print("ready: GitHub provider auth is configured via TF_VAR_github_token")
+            github_auth_from_env = True
+        elif os.environ.get("GITHUB_TOKEN"):
+            print("ready: GitHub provider auth is configured via GITHUB_TOKEN")
+            github_auth_from_env = True
         if prod_tfvars_exists:
-            print(f"ready: {self.infra_dir}/prod.tfvars exists")
+            print(f"ready: {prod_tfvars} exists")
+        elif github_auth_from_env:
+            print(f"note: {prod_tfvars} does not exist; env-based GitHub auth will be used for isolated Terraform runs")
         else:
-            print(f"missing: {self.infra_dir}/prod.tfvars does not exist")
+            print(f"missing: {prod_tfvars} does not exist")
             failures += 1
 
-        if os.environ.get("GITHUB_TOKEN"):
-            print("ready: GitHub provider auth is configured via GITHUB_TOKEN")
+        if github_auth_from_env:
+            pass
         elif prod_tfvars_exists:
             if not self.check_github_auth_from_prod_tfvars():
                 failures += 1
         else:
-            print(f"note: GitHub provider auth will be satisfied by setting GITHUB_TOKEN or adding github_token to {self.infra_dir}/prod.tfvars")
+            print(f"note: GitHub provider auth will be satisfied by setting GITHUB_TOKEN or adding github_token to {prod_tfvars}")
 
         if failures:
             print(f"Preflight failed with {failures} missing item(s).", file=sys.stderr)
@@ -369,6 +414,104 @@ Environment overrides:
         if payload_json.get("exists") == "true":
             return ProbeResult("found", arn=payload_json.get("arn"))
         return ProbeResult("not-found")
+
+    def read_github_token_from_prod_tfvars(self) -> str | None:
+        prod_tfvars = self.prod_tfvars_path()
+        if not prod_tfvars.exists():
+            return None
+        content = prod_tfvars.read_text(encoding="utf-8")
+        lines = content.splitlines()
+
+        for index, line in enumerate(lines):
+            match = re.match(r"^[ \t]*github_token[ \t]*=[ \t]*(.*)$", line)
+            if not match:
+                continue
+
+            remainder = match.group(1).strip()
+            if not remainder:
+                raise RunnerError(f"Failed to parse github_token from {prod_tfvars}: value must be a non-empty string")
+
+            inline_string = self._parse_inline_hcl_string(remainder)
+            if inline_string is not None:
+                return inline_string
+
+            heredoc_match = re.match(r"<<-?([A-Za-z0-9_]+)$", remainder)
+            if heredoc_match:
+                delimiter = heredoc_match.group(1)
+                return self._parse_heredoc_string(prod_tfvars, lines, index + 1, delimiter)
+
+            raise RunnerError(
+                f"Failed to parse github_token from {prod_tfvars}: expected a double-quoted string or heredoc assignment"
+            )
+        return None
+
+    def _parse_inline_hcl_string(self, value: str) -> str | None:
+        if not value.startswith('"'):
+            return None
+
+        escaped = False
+        closing_index = -1
+        for index in range(1, len(value)):
+            char = value[index]
+            if escaped:
+                escaped = False
+                continue
+            if char == "\\":
+                escaped = True
+                continue
+            if char == '"':
+                closing_index = index
+                break
+
+        if closing_index == -1:
+            raise RunnerError("Failed to parse github_token from tfvars: unterminated double-quoted string")
+
+        trailing = value[closing_index + 1 :].strip()
+        if trailing and not trailing.startswith("#") and not trailing.startswith("//"):
+            raise RunnerError("Failed to parse github_token from tfvars: unexpected trailing content after string value")
+
+        quoted_value = value[: closing_index + 1]
+        try:
+            parsed = json.loads(quoted_value)
+        except json.JSONDecodeError as exc:
+            raise RunnerError(f"Failed to parse github_token from tfvars: {exc}") from exc
+        parsed = parsed.strip()
+        if not parsed:
+            raise RunnerError("Failed to parse github_token from tfvars: value must be a non-empty string")
+        return parsed
+
+    def _parse_heredoc_string(self, prod_tfvars: Path, lines: list[str], start_index: int, delimiter: str) -> str:
+        heredoc_lines: list[str] = []
+        for line in lines[start_index:]:
+            if line.strip() == delimiter:
+                value = "\n".join(heredoc_lines).strip()
+                if not value:
+                    raise RunnerError(f"Failed to parse github_token from {prod_tfvars}: value must be a non-empty string")
+                return value
+            heredoc_lines.append(line)
+        raise RunnerError(f"Failed to parse github_token from {prod_tfvars}: missing heredoc terminator {delimiter}")
+
+    def resolve_github_token_value(self) -> str:
+        if self.github_token_value:
+            return self.github_token_value
+        if os.environ.get("TF_VAR_github_token"):
+            self.github_token_value = os.environ["TF_VAR_github_token"]
+            return self.github_token_value
+        if os.environ.get("GITHUB_TOKEN"):
+            self.github_token_value = os.environ["GITHUB_TOKEN"]
+            return self.github_token_value
+        token_from_tfvars = self.read_github_token_from_prod_tfvars()
+        if token_from_tfvars:
+            self.github_token_value = token_from_tfvars
+            return self.github_token_value
+        return ""
+
+    def terraform_env(self) -> dict[str, str]:
+        env = os.environ.copy()
+        token = self.resolve_github_token_value()
+        if token:
+            env["TF_VAR_github_token"] = token
+        return env
 
     def load_metadata(self) -> dict[str, Any] | None:
         if not self.metadata_path or not self.metadata_path.exists():
@@ -402,6 +545,7 @@ Environment overrides:
         aws_region_placeholder = os.environ.get("AWS_REGION", "__SET_AWS_REGION__")
         github_owner_placeholder = os.environ.get("GITHUB_OWNER", "__SET_GITHUB_OWNER__")
         tf_state_bucket_placeholder = os.environ.get("TF_STATE_BUCKET", "__SET_TF_STATE_BUCKET__")
+        self.github_token_value = self.resolve_github_token_value()
 
         self.manage_github_oidc_provider = True
         self.github_oidc_provider_arn_value = ""
@@ -467,6 +611,7 @@ Environment overrides:
                     f'aws_region          = "{aws_region_placeholder}"',
                     f'service_name        = "{self.service_name}"',
                     f'apprunner_image_tag = "{self.image_tag}"',
+                    "ecr_force_delete    = true",
                     f'github_owner        = "{github_owner_placeholder}"',
                     f'github_repo         = "{github_repo_placeholder}"',
                     'github_branch       = "main"',
@@ -520,7 +665,11 @@ Environment overrides:
 
     def run_isolated_tofu_init(self) -> None:
         assert self.backend_config_path is not None
-        self.run_cmd(["tofu", "init", "-reconfigure", f"-backend-config={self.backend_config_path}"], cwd=self.infra_dir)
+        self.run_cmd(
+            ["tofu", "init", "-reconfigure", f"-backend-config={self.backend_config_path}"],
+            cwd=self.infra_dir,
+            env=self.terraform_env(),
+        )
 
     def run_foundation_apply(self) -> None:
         self.require_materialized_value("AWS_REGION", os.environ.get("AWS_REGION"))
@@ -537,7 +686,7 @@ Environment overrides:
         cmd = ["tofu", "apply", f"-var-file={self.tfvars_path}"]
         if os.environ.get("AWS_INTEGRATION_AUTO_APPROVE", "1") != "0":
             cmd.insert(2, "-auto-approve")
-        self.run_cmd(cmd, cwd=self.infra_dir)
+        self.run_cmd(cmd, cwd=self.infra_dir, env=self.terraform_env())
 
     def run_bootstrap_publish(self) -> None:
         self.require_materialized_value("AWS_REGION", os.environ.get("AWS_REGION"))
@@ -582,18 +731,28 @@ Environment overrides:
         assert self.workdir is not None
         tofu_error_log = self.workdir / "tofu-service-url.stderr.log"
         aws_error_log = self.workdir / "aws-service-url.stderr.log"
-
-        tofu_output = subprocess.run(
-            ["tofu", "output", "-raw", "service_url"],
-            cwd=self.infra_dir,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        tofu_error_log.write_text(tofu_output.stderr or "", encoding="utf-8")
-        service_url = tofu_output.stdout.strip() if tofu_output.returncode == 0 else ""
-        if service_url:
-            return service_url
+        tofu_init_failure = ""
+        service_url = ""
+        try:
+            self.run_isolated_tofu_init()
+        except RunnerError as exc:
+            tofu_init_failure = exc.message
+            print(f"-- url-fetch: tofu init failed, falling back to AWS CLI lookup: {exc.message}", file=sys.stderr)
+            tofu_error_log.write_text(f"{tofu_init_failure}\n", encoding="utf-8")
+        else:
+            tofu_output = subprocess.run(
+                ["tofu", "output", "-raw", "service_url"],
+                cwd=self.infra_dir,
+                env=self.terraform_env(),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            tofu_stderr = tofu_output.stderr or ""
+            tofu_error_log.write_text(tofu_stderr, encoding="utf-8")
+            service_url = tofu_output.stdout.strip() if tofu_output.returncode == 0 else ""
+            if service_url:
+                return service_url
 
         self.require_command("aws")
         self.require_materialized_value("AWS_REGION", os.environ.get("AWS_REGION"))
@@ -640,7 +799,7 @@ Environment overrides:
         cmd = ["tofu", "apply", f"-var-file={self.tfvars_path}"]
         if os.environ.get("AWS_INTEGRATION_AUTO_APPROVE", "1") != "0":
             cmd.insert(2, "-auto-approve")
-        self.run_cmd(cmd, cwd=self.infra_dir)
+        self.run_cmd(cmd, cwd=self.infra_dir, env=self.terraform_env())
         service_url = self.fetch_service_url()
         print(f"Service URL: {service_url}")
 
@@ -681,7 +840,7 @@ Environment overrides:
         if payload.get("path") != verify_path:
             raise RunnerError(f"Fixture verification expected path={verify_path!r} but got {payload.get('path')!r}")
         self.verify_response_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        print(f"Fixture verification passed: {target_url}")
+        self.emit_step_status("verification", f"Fixture verification passed: {target_url}", COLOR_GREEN)
 
     def run_destroy(self, destroy_reason: str) -> None:
         self.require_materialized_value("AWS_REGION", os.environ.get("AWS_REGION"))
@@ -712,6 +871,7 @@ Environment overrides:
             init_proc = subprocess.run(
                 init_cmd,
                 cwd=self.infra_dir,
+                env=self.terraform_env(),
                 stdout=log_handle,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -728,17 +888,24 @@ Environment overrides:
             if auto_approve:
                 destroy_cmd.append("-auto-approve")
 
-            rc = self.run_with_timeout(self.cleanup_timeout_seconds, self.tofu_destroy_log_path, destroy_cmd, cwd=self.infra_dir)
+            rc = self.run_with_timeout(
+                self.cleanup_timeout_seconds,
+                self.tofu_destroy_log_path,
+                destroy_cmd,
+                cwd=self.infra_dir,
+                env=self.terraform_env(),
+            )
             if rc != 0:
                 raise RunnerError(f"Destroy failed with exit code {rc}", rc)
 
         self.note(f"Destroy log: {self.tofu_destroy_log_path}")
+        self.emit_step_status("destroy", "Destroy succeeded.", COLOR_GREEN)
 
     def attempt_cleanup_destroy(self) -> int:
         if not self.cleanup_required:
             return 0
         self.cleanup_attempted = True
-        self.log_step("destroy", "Attempting failure cleanup with isolated destroy")
+        self.log_step("destroy", "Attempting failure cleanup with isolated destroy", COLOR_RED)
         for name in ("AWS_REGION", "TF_STATE_BUCKET", "GITHUB_OWNER"):
             value = os.environ.get(name)
             if not value or value.startswith("__SET_"):
@@ -816,7 +983,7 @@ Readiness check before any AWS call:
         cleanup_status = "not-needed"
         if exit_code != 0:
             self.primary_failure_step = self.current_step
-            print(f"Integration runner failed during step '{self.current_step}' with exit code {exit_code}.", file=sys.stderr)
+            self.emit_step_status(self.current_step, f"Integration runner failed with exit code {exit_code}.", COLOR_RED)
             self.original_exit_code = exit_code
             if self.cleanup_required:
                 try:
@@ -824,18 +991,23 @@ Readiness check before any AWS call:
                 except CleanupSkipped as exc:
                     self.cleanup_exit_code = EXIT_CLEANUP_SKIPPED
                     cleanup_status = "skipped"
-                    print(exc.message, file=sys.stderr)
+                    self.emit_step_status("destroy", exc.message, COLOR_YELLOW)
                     print("Cleanup skipped during step 'destroy' because required integration inputs were not materialized.", file=sys.stderr)
                 except RunnerError as exc:
                     self.cleanup_exit_code = exc.exit_code
                     cleanup_status = "failed"
-                    print(f"Cleanup also failed during step 'destroy' with exit code {exc.exit_code}.", file=sys.stderr)
+                    self.emit_step_status("destroy", f"Cleanup also failed with exit code {exc.exit_code}.", COLOR_RED)
                     if self.tofu_destroy_log_path and self.tofu_destroy_log_path.exists():
                         print(f"Cleanup logs saved to {self.tofu_destroy_log_path}", file=sys.stderr)
                 else:
                     if self.cleanup_exit_code == 0:
                         cleanup_status = "succeeded"
-                        print("Cleanup succeeded during step 'destroy'.", file=sys.stderr)
+                        self.emit_step_status("destroy", "Cleanup succeeded.", COLOR_GREEN)
+                    else:
+                        cleanup_status = "failed"
+                        self.emit_step_status("destroy", f"Cleanup also failed with exit code {self.cleanup_exit_code}.", COLOR_RED)
+                        if self.tofu_destroy_log_path and self.tofu_destroy_log_path.exists():
+                            print(f"Cleanup logs saved to {self.tofu_destroy_log_path}", file=sys.stderr)
             self.write_cleanup_summary(cleanup_status)
             if self.cleanup_status_path and self.cleanup_status_path.exists():
                 print(f"Cleanup summary saved to {self.cleanup_status_path}", file=sys.stderr)
@@ -876,6 +1048,7 @@ Readiness check before any AWS call:
             return 0
         if self.mode == "run":
             self.run_full_sequence()
+            self.emit_step_status("run", "Integration run completed successfully.", COLOR_GREEN)
             return 0
         if self.mode == "foundation-apply":
             self.run_foundation_apply()

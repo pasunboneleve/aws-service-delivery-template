@@ -33,7 +33,8 @@ Current status:
 - it can run the first isolated `tofu init` + `tofu apply` for foundation resources
 - it can build and push the bootstrap fixture image to ECR
 - it can run the second isolated apply and fetch the service URL
-- it can verify the public fixture response at the service URL
+- it can reinitialize the isolated backend and verify the public fixture
+  response at the service URL
 - it can destroy isolated integration resources automatically on success
 - it can destroy a prior isolated run explicitly
 
@@ -91,6 +92,10 @@ The preflight mode checks:
 
 It does not contact AWS.
 
+When preflight passes, the runner resolves GitHub provider auth from
+`GITHUB_TOKEN`, `TF_VAR_github_token`, or `infra/prod.tfvars`, then forwards
+that value into isolated Terraform commands via `TF_VAR_github_token`.
+
 Once preflight passes, the normal first real run is:
 
 ```bash
@@ -109,6 +114,9 @@ Current naming strategy:
 - `ecr_repository_name`
   currently matches `service_name`, which mirrors the template's Terraform
   shape
+- `ecr_force_delete`
+  written as `true` in isolated integration tfvars so teardown can delete the
+  fixture image repository after pushing the bootstrap image
 - `state_key`
   uses `<repo-name>/integration/<run-id>.tfstate`
 - `image_tag`

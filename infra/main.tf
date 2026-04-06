@@ -118,6 +118,7 @@ resource "aws_iam_openid_connect_provider" "github" {
 resource "aws_ecr_repository" "images" {
   name                 = var.service_name
   image_tag_mutability = var.image_tag_mutability
+  force_delete         = var.ecr_force_delete
 
   image_scanning_configuration {
     scan_on_push = true

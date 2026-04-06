@@ -78,16 +78,22 @@ variable "image_tag_mutability" {
   default     = "MUTABLE"
 }
 
+variable "ecr_force_delete" {
+  description = "Whether Terraform should force-delete non-empty ECR repositories. Keep false for long-lived stacks; integration runs set this to true."
+  type        = bool
+  default     = false
+}
+
 variable "apprunner_cpu" {
-  description = "App Runner CPU size."
+  description = "App Runner CPU size per instance."
   type        = string
-  default     = "1 vCPU"
+  default     = "0.25 vCPU"
 }
 
 variable "apprunner_memory" {
-  description = "App Runner memory size."
+  description = "App Runner memory size per instance. This is RAM, not container disk."
   type        = string
-  default     = "2 GB"
+  default     = "0.5 GB"
 }
 
 variable "apprunner_image_tag" {
