@@ -7,7 +7,9 @@ moved {
 
 locals {
   apprunner_image_identifier = "${aws_ecr_repository.images.repository_url}:${var.apprunner_image_tag}"
-  github_oidc_provider_arn   = var.manage_github_oidc_provider ? try(one(aws_iam_openid_connect_provider.github[*].arn), "") : var.github_oidc_provider_arn
+  # Use a placeholder ARN if the provider is not managed and not provided to avoid plan errors.
+  # The placeholder must be a valid ARN format for IAM policy validation.
+  github_oidc_provider_arn = var.manage_github_oidc_provider ? try(one(aws_iam_openid_connect_provider.github[*].arn), "") : (var.github_oidc_provider_arn != null ? var.github_oidc_provider_arn : "")
 }
 
 data "external" "apprunner_image_presence" {
@@ -29,7 +31,7 @@ data "aws_iam_policy_document" "github_oidc_assume_role" {
 
     principals {
       type        = "Federated"
-      identifiers = [local.github_oidc_provider_arn]
+      identifiers = compact([local.github_oidc_provider_arn])
     }
 
     condition {

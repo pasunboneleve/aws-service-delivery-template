@@ -16,7 +16,6 @@ from urllib import error, parse, request
 
 
 EXIT_CLEANUP_SKIPPED = 98
-EXIT_OIDC_PROVIDER_NOT_FOUND = 11
 EXIT_OIDC_PROBE_OPTIONAL_FALLBACK = 3
 VALID_MODES = {
     "plan",
@@ -180,6 +179,9 @@ Environment overrides:
             return
         if exit_code != 0:
             print(f"Preserving generated integration workdir after failure: {self.workdir}")
+            return
+        if self.mode == "plan":
+            print(f"Preserving generated integration workdir after plan: {self.workdir}")
             return
         if self.keep_workdir == "1":
             print(f"Keeping integration workdir: {self.workdir}")
@@ -347,8 +349,6 @@ Environment overrides:
             capture_output=True,
             check=False,
         )
-        if completed.returncode == EXIT_OIDC_PROVIDER_NOT_FOUND:
-            return ProbeResult("not-found")
         if completed.returncode == EXIT_OIDC_PROBE_OPTIONAL_FALLBACK:
             message = completed.stderr.strip() or completed.stdout.strip() or "OIDC provider check warning"
             return ProbeResult("warning", message=message)
@@ -423,7 +423,7 @@ Environment overrides:
             github_repo_placeholder = "__SET_GITHUB_REPO__"
             self.github_repo_value = ""
 
-        if not metadata and self.mode in {"run", "foundation-apply", "second-apply"}:
+        if not metadata and self.mode in {"run", "foundation-apply"}:
             can_probe = (
                 aws_region_placeholder != "__SET_AWS_REGION__"
                 and tf_state_bucket_placeholder != "__SET_TF_STATE_BUCKET__"
@@ -693,27 +693,38 @@ Environment overrides:
             raise RunnerError("Manual destroy requires an explicit AWS_INTEGRATION_RUN_ID so the runner does not guess which isolated stack to tear down.")
         self.fail_if_simulated("destroy")
         self.tofu_destroy_log_path = self.workdir / ("cleanup-destroy.log" if destroy_reason == "failure-cleanup" else "destroy.log")
-        self.tofu_destroy_log_path.write_text(
-            "\n".join(
-                [
-                    f"Destroy run id: {self.run_id}",
-                    f"Destroy reason: {destroy_reason}",
-                    f"Destroy timeout seconds: {self.cleanup_timeout_seconds}",
-                    f"Backend config: {self.backend_config_path}",
-                    f"Vars file: {self.tfvars_path}",
-                    "",
-                ]
-            ),
-            encoding="utf-8",
-        )
-        cmd = [
-            "bash",
-            "-lc",
-            f"cd {shlex_quote(str(self.infra_dir))} && tofu init -reconfigure -backend-config={shlex_quote(str(self.backend_config_path))} && tofu destroy {'-auto-approve ' if os.environ.get('AWS_INTEGRATION_AUTO_APPROVE', '1') != '0' else ''}-var-file={shlex_quote(str(self.tfvars_path))}",
-        ]
-        rc = self.run_with_timeout(self.cleanup_timeout_seconds, self.tofu_destroy_log_path, cmd)
-        if rc != 0:
-            raise RunnerError(f"Destroy failed with exit code {rc}", rc)
+
+        auto_approve = os.environ.get("AWS_INTEGRATION_AUTO_APPROVE", "1") != "0"
+        with self.tofu_destroy_log_path.open("a", encoding="utf-8") as log_handle:
+            init_cmd = [
+                "tofu",
+                "init",
+                "-reconfigure",
+                f"-backend-config={self.backend_config_path}",
+            ]
+            init_proc = subprocess.run(
+                init_cmd,
+                cwd=self.infra_dir,
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
+                text=True,
+                check=False,
+            )
+            if init_proc.returncode != 0:
+                raise RunnerError(f"Tofu init for destroy failed with exit code {init_proc.returncode}")
+
+            destroy_cmd = [
+                "tofu",
+                "destroy",
+                f"-var-file={self.tfvars_path}",
+            ]
+            if auto_approve:
+                destroy_cmd.append("-auto-approve")
+
+            rc = self.run_with_timeout(self.cleanup_timeout_seconds, self.tofu_destroy_log_path, destroy_cmd)
+            if rc != 0:
+                raise RunnerError(f"Destroy failed with exit code {rc}", rc)
+
         self.note(f"Destroy log: {self.tofu_destroy_log_path}")
 
     def attempt_cleanup_destroy(self) -> int:
@@ -875,22 +886,20 @@ Readiness check before any AWS call:
         return 0
 
 
-def shlex_quote(value: str) -> str:
-    return shlex.quote(value)
-
-
 def main(argv: list[str]) -> int:
     runner = AwsIntegrationRunner(argv)
     exit_code = 0
     try:
         exit_code = runner.main()
-        return exit_code
     except RunnerError as exc:
         print(exc.message, file=sys.stderr)
         exit_code = exc.exit_code
-        return exit_code
+    except Exception as exc:
+        print(f"Unexpected error: {exc}", file=sys.stderr)
+        exit_code = 1
     finally:
         runner.finalize_run(exit_code)
+    return exit_code
 
 
 if __name__ == "__main__":
