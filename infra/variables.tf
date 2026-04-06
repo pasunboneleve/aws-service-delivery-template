@@ -30,6 +30,23 @@ variable "github_oidc_audience" {
   default     = "sts.amazonaws.com"
 }
 
+variable "manage_github_oidc_provider" {
+  description = "Whether Terraform should create and manage the GitHub Actions OIDC provider in this stack."
+  type        = bool
+  default     = true
+}
+
+variable "github_oidc_provider_arn" {
+  description = "Existing GitHub Actions OIDC provider ARN to reuse when manage_github_oidc_provider is false."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.manage_github_oidc_provider || (var.github_oidc_provider_arn != null && trimspace(var.github_oidc_provider_arn) != "")
+    error_message = "Set github_oidc_provider_arn when manage_github_oidc_provider is false."
+  }
+}
+
 variable "github_environment" {
   description = "Optional GitHub Actions environment name to constrain the OIDC trust policy."
   type        = string

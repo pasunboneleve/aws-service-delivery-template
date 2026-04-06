@@ -8,7 +8,8 @@ from pathlib import Path
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-SCRIPT_PATH = ROOT_DIR / "scripts" / "check-ecr-image.sh"
+ECR_SCRIPT_PATH = ROOT_DIR / "scripts" / "check-ecr-image.sh"
+OIDC_SCRIPT_PATH = ROOT_DIR / "scripts" / "check-github-oidc-provider.sh"
 
 
 class HelperScriptContractsTest(unittest.TestCase):
@@ -85,7 +86,264 @@ class HelperScriptContractsTest(unittest.TestCase):
             )
 
             return subprocess.run(
-                ["bash", str(SCRIPT_PATH)],
+                ["bash", str(ECR_SCRIPT_PATH)],
+                input=payload,
+                text=True,
+                capture_output=True,
+                check=False,
+                env=env,
+            )
+
+
+class GithubOidcProviderScriptContractsTest(unittest.TestCase):
+    def setUp(self) -> None:
+        if shutil.which("jq") is None:
+            self.skipTest("jq is required to exercise check-github-oidc-provider.sh")
+
+    def test_existing_provider_returns_true_with_arn(self) -> None:
+        result = self._run_script(
+            aws_script=(
+                "#!/usr/bin/env bash\n"
+                "if [ \"$1\" = \"iam\" ] && [ \"$2\" = \"list-open-id-connect-providers\" ] && [ \"$3\" = \"--output\" ] && [ \"$4\" = \"json\" ]; then\n"
+                "  cat <<'EOF'\n"
+                "{\"OpenIDConnectProviderList\":[{\"Arn\":\"arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com\"}]}\n"
+                "EOF\n"
+                "elif [ \"$1\" = \"iam\" ] && [ \"$2\" = \"get-open-id-connect-provider\" ] && [ \"$5\" = \"--output\" ] && [ \"$6\" = \"json\" ]; then\n"
+                "  cat <<'EOF'\n"
+                "{\"Url\":\"token.actions.githubusercontent.com\",\"ClientIDList\":[\"sts.amazonaws.com\"]}\n"
+                "EOF\n"
+                "else\n"
+                "  exit 2\n"
+                "fi\n"
+            )
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(
+            json.loads(result.stdout),
+            {
+                "exists": "true",
+                "arn": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+            },
+        )
+
+    def test_matching_provider_can_appear_later_in_the_list(self) -> None:
+        result = self._run_script(
+            aws_script=(
+                "#!/usr/bin/env bash\n"
+                "if [ \"$1\" = \"iam\" ] && [ \"$2\" = \"list-open-id-connect-providers\" ]; then\n"
+                "  cat <<'EOF'\n"
+                "{\"OpenIDConnectProviderList\":[{\"Arn\":\"arn:aws:iam::123456789012:oidc-provider/example.invalid\"},{\"Arn\":\"arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com\"}]}\n"
+                "EOF\n"
+                "elif [ \"$1\" = \"iam\" ] && [ \"$2\" = \"get-open-id-connect-provider\" ] && [ \"$4\" = \"arn:aws:iam::123456789012:oidc-provider/example.invalid\" ]; then\n"
+                "  cat <<'EOF'\n"
+                "{\"Url\":\"example.invalid\",\"ClientIDList\":[\"sts.amazonaws.com\"]}\n"
+                "EOF\n"
+                "elif [ \"$1\" = \"iam\" ] && [ \"$2\" = \"get-open-id-connect-provider\" ]; then\n"
+                "  cat <<'EOF'\n"
+                "{\"Url\":\"token.actions.githubusercontent.com\",\"ClientIDList\":[\"sts.amazonaws.com\"]}\n"
+                "EOF\n"
+                "else\n"
+                "  exit 2\n"
+                "fi\n"
+            )
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(
+            json.loads(result.stdout),
+            {
+                "exists": "true",
+                "arn": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+            },
+        )
+
+    def test_unreadable_provider_is_skipped_if_later_match_exists(self) -> None:
+        result = self._run_script(
+            aws_script=(
+                "#!/usr/bin/env bash\n"
+                "if [ \"$1\" = \"iam\" ] && [ \"$2\" = \"list-open-id-connect-providers\" ]; then\n"
+                "  cat <<'EOF'\n"
+                "{\"OpenIDConnectProviderList\":[{\"Arn\":\"arn:aws:iam::123456789012:oidc-provider/inaccessible.example\"},{\"Arn\":\"arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com\"}]}\n"
+                "EOF\n"
+                "elif [ \"$1\" = \"iam\" ] && [ \"$2\" = \"get-open-id-connect-provider\" ] && [ \"$4\" = \"arn:aws:iam::123456789012:oidc-provider/inaccessible.example\" ]; then\n"
+                "  echo 'AccessDenied for inaccessible.example' >&2\n"
+                "  exit 255\n"
+                "elif [ \"$1\" = \"iam\" ] && [ \"$2\" = \"get-open-id-connect-provider\" ]; then\n"
+                "  cat <<'EOF'\n"
+                "{\"Url\":\"token.actions.githubusercontent.com\",\"ClientIDList\":[\"sts.amazonaws.com\"]}\n"
+                "EOF\n"
+                "else\n"
+                "  exit 2\n"
+                "fi\n"
+            )
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(
+            json.loads(result.stdout),
+            {
+                "exists": "true",
+                "arn": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+            },
+        )
+        self.assertIn("OIDC provider check warning", result.stderr)
+
+    def test_unreadable_target_provider_exits_non_zero(self) -> None:
+        result = self._run_script(
+            aws_script=(
+                "#!/usr/bin/env bash\n"
+                "if [ \"$1\" = \"iam\" ] && [ \"$2\" = \"list-open-id-connect-providers\" ]; then\n"
+                "  cat <<'EOF'\n"
+                "{\"OpenIDConnectProviderList\":[{\"Arn\":\"arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com\"}]}\n"
+                "EOF\n"
+                "elif [ \"$1\" = \"iam\" ] && [ \"$2\" = \"get-open-id-connect-provider\" ]; then\n"
+                "  echo 'AccessDenied for token.actions.githubusercontent.com' >&2\n"
+                "  exit 255\n"
+                "else\n"
+                "  exit 2\n"
+                "fi\n"
+            )
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unable to read the existing target provider", result.stderr)
+
+    def test_provider_missing_url_is_skipped_if_later_match_exists(self) -> None:
+        result = self._run_script(
+            aws_script=(
+                "#!/usr/bin/env bash\n"
+                "if [ \"$1\" = \"iam\" ] && [ \"$2\" = \"list-open-id-connect-providers\" ]; then\n"
+                "  cat <<'EOF'\n"
+                "{\"OpenIDConnectProviderList\":[{\"Arn\":\"arn:aws:iam::123456789012:oidc-provider/malformed.example\"},{\"Arn\":\"arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com\"}]}\n"
+                "EOF\n"
+                "elif [ \"$1\" = \"iam\" ] && [ \"$2\" = \"get-open-id-connect-provider\" ] && [ \"$4\" = \"arn:aws:iam::123456789012:oidc-provider/malformed.example\" ]; then\n"
+                "  cat <<'EOF'\n"
+                "{}\n"
+                "EOF\n"
+                "elif [ \"$1\" = \"iam\" ] && [ \"$2\" = \"get-open-id-connect-provider\" ]; then\n"
+                "  cat <<'EOF'\n"
+                "{\"Url\":\"token.actions.githubusercontent.com\",\"ClientIDList\":[\"sts.amazonaws.com\"]}\n"
+                "EOF\n"
+                "else\n"
+                "  exit 2\n"
+                "fi\n"
+            )
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(
+            json.loads(result.stdout),
+            {
+                "exists": "true",
+                "arn": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+            },
+        )
+        self.assertIn("provider response did not contain Url", result.stderr)
+
+    def test_missing_provider_returns_false(self) -> None:
+        result = self._run_script(
+            aws_script=(
+                "#!/usr/bin/env bash\n"
+                "if [ \"$1\" = \"iam\" ] && [ \"$2\" = \"list-open-id-connect-providers\" ]; then\n"
+                "  cat <<'EOF'\n"
+                "{\"OpenIDConnectProviderList\":[{\"Arn\":\"arn:aws:iam::123456789012:oidc-provider/example.invalid\"}]}\n"
+                "EOF\n"
+                "elif [ \"$1\" = \"iam\" ] && [ \"$2\" = \"get-open-id-connect-provider\" ]; then\n"
+                "  cat <<'EOF'\n"
+                "{\"Url\":\"example.invalid\",\"ClientIDList\":[\"sts.amazonaws.com\"]}\n"
+                "EOF\n"
+                "else\n"
+                "  exit 2\n"
+                "fi\n"
+            )
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(json.loads(result.stdout), {"exists": "false", "arn": ""})
+
+    def test_matching_url_with_wrong_audience_exits_non_zero(self) -> None:
+        result = self._run_script(
+            aws_script=(
+                "#!/usr/bin/env bash\n"
+                "if [ \"$1\" = \"iam\" ] && [ \"$2\" = \"list-open-id-connect-providers\" ]; then\n"
+                "  cat <<'EOF'\n"
+                "{\"OpenIDConnectProviderList\":[{\"Arn\":\"arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com\"}]}\n"
+                "EOF\n"
+                "elif [ \"$1\" = \"iam\" ] && [ \"$2\" = \"get-open-id-connect-provider\" ]; then\n"
+                "  cat <<'EOF'\n"
+                "{\"Url\":\"token.actions.githubusercontent.com\",\"ClientIDList\":[\"not-sts.amazonaws.com\"]}\n"
+                "EOF\n"
+                "else\n"
+                "  exit 2\n"
+                "fi\n"
+            )
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not include required audience", result.stderr)
+
+    def test_empty_provider_list_returns_false(self) -> None:
+        result = self._run_script(
+            aws_script=(
+                "#!/usr/bin/env bash\n"
+                "if [ \"$1\" = \"iam\" ] && [ \"$2\" = \"list-open-id-connect-providers\" ]; then\n"
+                "  cat <<'EOF'\n"
+                "{\"OpenIDConnectProviderList\":[]}\n"
+                "EOF\n"
+                "else\n"
+                "  exit 2\n"
+                "fi\n"
+            )
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(json.loads(result.stdout), {"exists": "false", "arn": ""})
+
+    def test_credential_or_permission_failure_exits_non_zero(self) -> None:
+        result = self._run_script(
+            aws_script=(
+                "#!/usr/bin/env bash\n"
+                "echo 'An error occurred (AccessDenied) when calling the ListOpenIDConnectProviders operation' >&2\n"
+                "exit 255\n"
+            )
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("OIDC provider check failed:", result.stderr)
+
+    def test_unexpected_list_failure_exits_non_zero(self) -> None:
+        result = self._run_script(
+            aws_script=(
+                "#!/usr/bin/env bash\n"
+                "echo 'panic: malformed response' >&2\n"
+                "exit 255\n"
+            )
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("OIDC provider check failed:", result.stderr)
+
+    def _run_script(self, aws_script: str) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stub_dir = Path(temp_dir) / "bin"
+            stub_dir.mkdir()
+
+            aws_stub = stub_dir / "aws"
+            aws_stub.write_text(aws_script, encoding="utf-8")
+            aws_stub.chmod(0o755)
+
+            env = os.environ.copy()
+            env["PATH"] = f"{stub_dir}:{env['PATH']}"
+            payload = json.dumps(
+                {
+                    "url": "https://token.actions.githubusercontent.com",
+                    "audience": "sts.amazonaws.com",
+                }
+            )
+
+            return subprocess.run(
+                ["bash", str(OIDC_SCRIPT_PATH)],
                 input=payload,
                 text=True,
                 capture_output=True,

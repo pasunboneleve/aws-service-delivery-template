@@ -51,6 +51,8 @@ Required environment for real AWS runs:
 - `AWS_REGION`
 - `TF_STATE_BUCKET`
 - `GITHUB_OWNER`
+- optional `GITHUB_REPO` if the target GitHub repo name differs from the
+  local folder name or cannot be derived from `git origin`
 - usable AWS credentials, for example via `AWS_PROFILE`
 - GitHub provider auth, for example via `GITHUB_TOKEN`
 
@@ -76,6 +78,9 @@ The preflight mode checks:
   - `AWS_REGION`
   - `TF_STATE_BUCKET`
   - `GITHUB_OWNER`
+- GitHub repo target:
+  - `GITHUB_REPO`, or
+  - derived from `git remote origin`
 - AWS credential source:
   - `AWS_PROFILE`, or
   - `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`
@@ -96,6 +101,9 @@ Current naming strategy:
 
 - `integration_prefix`
   derived from `<repo-name>-<run-id>` and slugified
+- `github_repo`
+  taken from `GITHUB_REPO` when set, otherwise derived from `git remote
+  origin`
 - `service_name`
   trimmed from the prefix to stay within the current App Runner naming budget
 - `ecr_repository_name`
@@ -109,6 +117,18 @@ Current naming strategy:
 Current TODO boundary:
 
 - scheduled/nightly execution remains a separate follow-up
+
+Account-level behavior:
+
+- normal template stacks still manage their own GitHub Actions IAM OIDC
+  provider by default
+- the AWS integration runner now checks for an existing provider for
+  `https://token.actions.githubusercontent.com` and, when it can read a
+  compatible provider, writes isolated tfvars that reuse that ARN instead of
+  creating a duplicate
+- detecting an existing provider requires AWS IAM read access for:
+  - `iam:ListOpenIDConnectProviders`
+  - `iam:GetOpenIDConnectProvider`
 
 Current command surface:
 
@@ -310,6 +330,7 @@ To manually destroy a prior run, you must provide:
 - `TF_STATE_BUCKET`
 - `GITHUB_OWNER`
 - `AWS_INTEGRATION_RUN_ID`
+- `AWS_INTEGRATION_WORKDIR` pointing at the preserved workdir for that run
 
 Then run:
 
@@ -318,11 +339,14 @@ AWS_REGION=ap-southeast-2 \
 TF_STATE_BUCKET=your-state-bucket \
 GITHUB_OWNER=your-github-owner \
 AWS_INTEGRATION_RUN_ID=20260402173502-24 \
+AWS_INTEGRATION_WORKDIR=/tmp/minimal-aws-github-ci-template-20260402173502-24-XXXXXX \
 ./scripts/run-aws-integration.sh destroy
 ```
 
-The explicit run id is required so the runner does not guess which isolated
-stack to destroy. For failed runs, you can obtain the run id from:
+The explicit run id and preserved workdir are required so the runner does not
+guess which isolated stack to destroy and can reuse the original GitHub repo
+target plus OIDC-management settings from `integration-metadata.json`. For failed runs,
+you can obtain the run id and workdir from:
 
 - the runner output
 - the preserved integration workdir name

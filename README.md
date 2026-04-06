@@ -130,6 +130,8 @@ Phase 2 requires real AWS access. Before running it, make sure you have:
   - read App Runner service state
 - a Terraform state bucket in `TF_STATE_BUCKET`
 - `GITHUB_OWNER` set for the target GitHub namespace
+- the target GitHub repo name available either from `GITHUB_REPO` or from
+  `git remote origin`
 
 Recommended environment:
 
@@ -177,11 +179,14 @@ AWS_REGION=ap-southeast-2 \
 TF_STATE_BUCKET=your-tf-state-bucket \
 GITHUB_OWNER=your-github-owner \
 AWS_INTEGRATION_RUN_ID=<previous-run-id> \
+AWS_INTEGRATION_WORKDIR=/path/to/preserved-workdir \
 ./scripts/run-aws-integration.sh destroy
 ```
 
-The explicit `AWS_INTEGRATION_RUN_ID` requirement is intentional. It prevents
-the runner from guessing which isolated stack to tear down.
+The explicit `AWS_INTEGRATION_RUN_ID` and preserved
+`AWS_INTEGRATION_WORKDIR` are intentional. They prevent the runner from
+guessing which isolated stack to tear down and let it reuse the original
+GitHub repo target and OIDC-management settings for that run.
 
 Current limitations:
 

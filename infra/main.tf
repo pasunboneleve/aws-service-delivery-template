@@ -1,7 +1,13 @@
 data "aws_caller_identity" "current" {}
 
+moved {
+  from = aws_iam_openid_connect_provider.github
+  to   = aws_iam_openid_connect_provider.github[0]
+}
+
 locals {
   apprunner_image_identifier = "${aws_ecr_repository.images.repository_url}:${var.apprunner_image_tag}"
+  github_oidc_provider_arn   = var.manage_github_oidc_provider ? try(one(aws_iam_openid_connect_provider.github[*].arn), "") : var.github_oidc_provider_arn
 }
 
 data "external" "apprunner_image_presence" {
@@ -12,8 +18,8 @@ data "external" "apprunner_image_presence" {
 
   query = {
     repository_name = var.service_name
-    image_tag      = var.apprunner_image_tag
-    aws_region     = var.aws_region
+    image_tag       = var.apprunner_image_tag
+    aws_region      = var.aws_region
   }
 }
 
@@ -23,7 +29,7 @@ data "aws_iam_policy_document" "github_oidc_assume_role" {
 
     principals {
       type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github.arn]
+      identifiers = [local.github_oidc_provider_arn]
     }
 
     condition {
@@ -95,7 +101,8 @@ data "aws_iam_policy_document" "app_runner_ecr_assume_role" {
 }
 
 resource "aws_iam_openid_connect_provider" "github" {
-  url = "https://token.actions.githubusercontent.com"
+  count = var.manage_github_oidc_provider ? 1 : 0
+  url   = "https://token.actions.githubusercontent.com"
 
   client_id_list = [
     var.github_oidc_audience,
