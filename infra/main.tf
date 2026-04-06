@@ -170,6 +170,12 @@ resource "aws_iam_role" "ecs_task_execution" {
   assume_role_policy = data.aws_iam_policy_document.ecs_task_execution_assume_role.json
 }
 
+resource "terraform_data" "ensure_ecs_service_linked_role" {
+  provisioner "local-exec" {
+    command = "bash ${path.module}/../scripts/ensure-ecs-service-linked-role.sh"
+  }
+}
+
 resource "aws_iam_role_policy_attachment" "ecs_task_execution" {
   role       = aws_iam_role.ecs_task_execution.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
@@ -197,6 +203,10 @@ resource "aws_cloudformation_stack" "ecs_express_service" {
   lifecycle {
     ignore_changes = [parameters["ImageUri"]]
   }
+
+  depends_on = [
+    terraform_data.ensure_ecs_service_linked_role,
+  ]
 }
 
 data "external" "ecs_express_service_endpoint" {

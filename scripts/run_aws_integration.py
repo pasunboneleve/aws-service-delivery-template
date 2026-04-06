@@ -64,7 +64,7 @@ class AwsIntegrationRunner:
         self.run_id = self._slugify(run_id_raw)
         self.workdir = Path(os.environ["AWS_INTEGRATION_WORKDIR"]) if os.environ.get("AWS_INTEGRATION_WORKDIR") else None
         self.keep_workdir = os.environ.get("AWS_INTEGRATION_KEEP_WORKDIR", "0")
-        self.cleanup_timeout_seconds = int(os.environ.get("AWS_INTEGRATION_CLEANUP_TIMEOUT_SECONDS", "300"))
+        self.cleanup_timeout_seconds = int(os.environ.get("AWS_INTEGRATION_CLEANUP_TIMEOUT_SECONDS", "900"))
         self.simulated_failure_steps = {
             step.strip() for step in os.environ.get("AWS_INTEGRATION_SIMULATE_FAILURE_AT", "").split(",") if step.strip()
         }
@@ -186,6 +186,14 @@ Environment overrides:
     def validate_optional_env(self, name: str, value: str | None, pattern: str) -> None:
         if value and re.fullmatch(pattern, value) is None:
             raise RunnerError(f"Invalid value for {name}: {value}")
+
+    def normalize_service_url(self, value: str) -> str:
+        candidate = value.strip()
+        if not candidate or candidate == "None":
+            return ""
+        if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", candidate):
+            return candidate
+        return f"https://{candidate}"
 
     def require_materialized_value(self, name: str, value: str | None) -> None:
         if not value or value.startswith("__SET_"):
@@ -777,7 +785,7 @@ Environment overrides:
             )
             tofu_stderr = tofu_output.stderr or ""
             tofu_error_log.write_text(tofu_stderr, encoding="utf-8")
-            service_url = tofu_output.stdout.strip() if tofu_output.returncode == 0 else ""
+            service_url = self.normalize_service_url(tofu_output.stdout) if tofu_output.returncode == 0 else ""
             if service_url:
                 return service_url
 
@@ -803,8 +811,8 @@ Environment overrides:
             check=False,
         )
         aws_error_log.write_text(aws_output.stderr or "", encoding="utf-8")
-        service_url = aws_output.stdout.strip() if aws_output.returncode == 0 else ""
-        if service_url and service_url != "None":
+        service_url = self.normalize_service_url(aws_output.stdout) if aws_output.returncode == 0 else ""
+        if service_url:
             return service_url
 
         message = "Unable to determine ECS Express service URL after second apply."
@@ -969,6 +977,13 @@ Environment overrides:
         }
         self.cleanup_status_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
+    def manual_destroy_command(self) -> str:
+        command = f"AWS_INTEGRATION_RUN_ID={shlex.quote(self.run_id)}"
+        if self.workdir:
+            command += f" AWS_INTEGRATION_WORKDIR={shlex.quote(str(self.workdir))}"
+        command += " ./scripts/run-aws-integration.sh destroy"
+        return command
+
     def print_plan(self) -> None:
         assert self.backend_config_path is not None
         assert self.tfvars_path is not None
@@ -1027,6 +1042,7 @@ Readiness check before any AWS call:
                     self.cleanup_exit_code = exc.exit_code
                     cleanup_status = "failed"
                     self.emit_step_status("destroy", f"Cleanup also failed with exit code {exc.exit_code}.", COLOR_RED)
+                    print(f"Manual cleanup command: {self.manual_destroy_command()}", file=sys.stderr)
                     if self.tofu_destroy_log_path and self.tofu_destroy_log_path.exists():
                         print(f"Cleanup logs saved to {self.tofu_destroy_log_path}", file=sys.stderr)
                 else:
@@ -1036,6 +1052,7 @@ Readiness check before any AWS call:
                     else:
                         cleanup_status = "failed"
                         self.emit_step_status("destroy", f"Cleanup also failed with exit code {self.cleanup_exit_code}.", COLOR_RED)
+                        print(f"Manual cleanup command: {self.manual_destroy_command()}", file=sys.stderr)
                         if self.tofu_destroy_log_path and self.tofu_destroy_log_path.exists():
                             print(f"Cleanup logs saved to {self.tofu_destroy_log_path}", file=sys.stderr)
             self.write_cleanup_summary(cleanup_status)

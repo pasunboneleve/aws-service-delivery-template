@@ -188,6 +188,8 @@ Current behavior of `run`:
 - destroys the isolated stack on success
 - force-deletes the ephemeral integration ECR repository on teardown so pushed fixture images do not block cleanup
 - if a destructive step fails, attempts cleanup destroy automatically
+- cleanup destroy waits up to 15 minutes by default; override with
+  `AWS_INTEGRATION_CLEANUP_TIMEOUT_SECONDS` if needed
 
 To manually destroy a prior isolated run:
 

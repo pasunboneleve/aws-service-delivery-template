@@ -11,6 +11,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 ECR_SCRIPT_PATH = ROOT_DIR / "scripts" / "check-ecr-image.sh"
 OIDC_SCRIPT_PATH = ROOT_DIR / "scripts" / "check-github-oidc-provider.sh"
 ECS_EXPRESS_SERVICE_SCRIPT_PATH = ROOT_DIR / "scripts" / "describe-ecs-express-service.sh"
+ECS_SERVICE_LINKED_ROLE_SCRIPT_PATH = ROOT_DIR / "scripts" / "ensure-ecs-service-linked-role.sh"
 
 
 class HelperScriptContractsTest(unittest.TestCase):
@@ -416,6 +417,90 @@ class EcsExpressServiceScriptContractsTest(unittest.TestCase):
             return subprocess.run(
                 ["bash", str(ECS_EXPRESS_SERVICE_SCRIPT_PATH)],
                 input=payload,
+                text=True,
+                capture_output=True,
+                check=False,
+                env=env,
+            )
+
+
+class EcsServiceLinkedRoleScriptContractsTest(unittest.TestCase):
+    def setUp(self) -> None:
+        pass
+
+    def test_existing_role_exits_zero(self) -> None:
+        result = self._run_script(
+            aws_script=(
+                "#!/usr/bin/env bash\n"
+                "cat <<'EOF'\n"
+                '{"Role":{"Arn":"arn:aws:iam::123456789012:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS"}}\n'
+                "EOF\n"
+            )
+        )
+
+        self.assertEqual(result.returncode, 0)
+
+    def test_missing_role_is_created(self) -> None:
+        result = self._run_script(
+            aws_script=(
+                "#!/usr/bin/env bash\n"
+                "if [ \"$1\" = \"iam\" ] && [ \"$2\" = \"get-role\" ]; then\n"
+                "  echo 'An error occurred (NoSuchEntity) when calling the GetRole operation' >&2\n"
+                "  exit 255\n"
+                "fi\n"
+                "if [ \"$1\" = \"iam\" ] && [ \"$2\" = \"create-service-linked-role\" ]; then\n"
+                "  exit 0\n"
+                "fi\n"
+                "exit 2\n"
+            )
+        )
+
+        self.assertEqual(result.returncode, 0)
+
+    def test_already_exists_race_exits_zero(self) -> None:
+        result = self._run_script(
+            aws_script=(
+                "#!/usr/bin/env bash\n"
+                "if [ \"$1\" = \"iam\" ] && [ \"$2\" = \"get-role\" ]; then\n"
+                "  echo 'An error occurred (NoSuchEntity) when calling the GetRole operation' >&2\n"
+                "  exit 255\n"
+                "fi\n"
+                "if [ \"$1\" = \"iam\" ] && [ \"$2\" = \"create-service-linked-role\" ]; then\n"
+                "  echo 'An error occurred (InvalidInput) when calling the CreateServiceLinkedRole operation: Service role name AWSServiceRoleForECS has been taken in this account, please try a different suffix.' >&2\n"
+                "  exit 255\n"
+                "fi\n"
+                "exit 2\n"
+            )
+        )
+
+        self.assertEqual(result.returncode, 0)
+
+    def test_auth_or_api_failure_exits_non_zero(self) -> None:
+        result = self._run_script(
+            aws_script=(
+                "#!/usr/bin/env bash\n"
+                "echo 'An error occurred (AccessDenied) when calling the GetRole operation' >&2\n"
+                "exit 255\n"
+            )
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ECS service-linked role ensure failed during get-role:", result.stderr)
+
+    def _run_script(self, aws_script: str) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stub_dir = Path(temp_dir) / "bin"
+            stub_dir.mkdir()
+
+            aws_stub = stub_dir / "aws"
+            aws_stub.write_text(aws_script, encoding="utf-8")
+            aws_stub.chmod(0o755)
+
+            env = os.environ.copy()
+            env["PATH"] = f"{stub_dir}:{env['PATH']}"
+
+            return subprocess.run(
+                ["bash", str(ECS_SERVICE_LINKED_ROLE_SCRIPT_PATH)],
                 text=True,
                 capture_output=True,
                 check=False,
