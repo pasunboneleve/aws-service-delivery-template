@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import re
-import selectors
 import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -237,7 +238,7 @@ Environment overrides:
         stream_output: bool = False,
     ) -> int:
         with logfile.open("a", encoding="utf-8") as handle:
-            process = subprocess.Popen(
+            with subprocess.Popen(
                 cmd,
                 cwd=cwd,
                 env=env,
@@ -245,17 +246,26 @@ Environment overrides:
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
-            )
-            selector = selectors.DefaultSelector()
-            try:
+            ) as process:
                 assert process.stdout is not None
-                selector.register(process.stdout, selectors.EVENT_READ)
+                output_queue: queue.Queue[str | None] = queue.Queue()
+
+                def reader() -> None:
+                    try:
+                        for line in process.stdout:
+                            output_queue.put(line)
+                    finally:
+                        output_queue.put(None)
+
+                reader_thread = threading.Thread(target=reader, daemon=True)
+                reader_thread.start()
                 deadline = time.monotonic() + timeout_seconds
                 while True:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         process.kill()
                         process.wait()
+                        reader_thread.join(timeout=1)
                         timeout_message = f"Timed out after {timeout_seconds}s: {' '.join(cmd)}\n"
                         handle.write(timeout_message)
                         handle.flush()
@@ -263,26 +273,37 @@ Environment overrides:
                             print(timeout_message, end="", file=sys.stderr)
                         return 124
 
-                    events = selector.select(timeout=min(1.0, remaining))
-                    for key, _ in events:
-                        line = key.fileobj.readline()
-                        if not line:
-                            continue
-                        handle.write(line)
-                        handle.flush()
-                        if stream_output:
-                            print(line, end="", file=sys.stderr)
+                    try:
+                        line = output_queue.get(timeout=min(1.0, remaining))
+                    except queue.Empty:
+                        if process.poll() is not None:
+                            reader_thread.join(timeout=1)
+                            break
+                        continue
 
-                    if process.poll() is not None:
-                        for line in process.stdout.readlines():
-                            handle.write(line)
-                            handle.flush()
-                            if stream_output:
-                                print(line, end="", file=sys.stderr)
+                    if line is None:
+                        reader_thread.join(timeout=1)
+                        if process.poll() is None:
+                            continue
                         break
-            finally:
-                selector.close()
-            return process.returncode
+
+                    handle.write(line)
+                    handle.flush()
+                    if stream_output:
+                        print(line, end="", file=sys.stderr)
+
+                while True:
+                    try:
+                        line = output_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    if line is None:
+                        continue
+                    handle.write(line)
+                    handle.flush()
+                    if stream_output:
+                        print(line, end="", file=sys.stderr)
+                return process.returncode
 
     def run_cmd(
         self,
