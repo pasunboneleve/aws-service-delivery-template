@@ -5,8 +5,9 @@ This directory provisions the AWS-side delivery foundation:
 - an ECR repository for application images
 - an IAM OIDC provider for GitHub Actions
 - an IAM deploy role that GitHub Actions can assume on `main`
-- an App Runner access role that allows the runtime to pull from ECR
-- an App Runner service once the bootstrap image exists in ECR
+- an ECS task execution role that allows the runtime to pull from ECR
+- an ECS Express infrastructure role for AWS-managed networking and scaling
+- an ECS Express service once the bootstrap image exists in ECR
 - GitHub Actions secrets for role ARNs
 - GitHub Actions variables for region, repository, and service settings
 
@@ -62,9 +63,14 @@ Useful outputs include:
 
 - `ecr_repository_url`
 - `github_actions_role_arn`
-- `app_runner_ecr_access_role_arn`
-- `app_runner_service_arn`
+- `ecs_task_execution_role_arn`
+- `ecs_express_infrastructure_role_arn`
+- `ecs_express_service_arn`
 - `service_url`
+
+The default ECS Express sizing is intentionally small for a template:
+`256` CPU units (`0.25 vCPU`) and `512` MiB (`0.5 GB`) memory per task.
+That memory value is RAM, not container disk.
 
 If `service_url` is `null`, the configured bootstrap tag does not exist in ECR yet. Push one image to `main`, rerun `tofu apply`, then update the README:
 

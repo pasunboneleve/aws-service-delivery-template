@@ -18,17 +18,22 @@ output "github_actions_role_arn" {
   value       = aws_iam_role.github_actions.arn
 }
 
-output "app_runner_ecr_access_role_arn" {
-  description = "IAM role used by App Runner to pull images from ECR."
-  value       = aws_iam_role.app_runner_ecr_access.arn
+output "ecs_task_execution_role_arn" {
+  description = "IAM role used by ECS tasks to pull images and publish logs."
+  value       = aws_iam_role.ecs_task_execution.arn
 }
 
-output "app_runner_service_arn" {
-  description = "ARN of the Terraform-managed App Runner service."
-  value       = try(aws_apprunner_service.service[0].arn, null)
+output "ecs_express_infrastructure_role_arn" {
+  description = "IAM role used by ECS Express Mode to manage load balancers, security groups, and autoscaling."
+  value       = aws_iam_role.ecs_express_infrastructure.arn
+}
+
+output "ecs_express_service_arn" {
+  description = "ARN of the Terraform-managed ECS Express service."
+  value       = try(aws_cloudformation_stack.ecs_express_service[0].outputs["ServiceArn"], null)
 }
 
 output "service_url" {
-  description = "Public App Runner service URL."
-  value       = try(format("https://%s", aws_apprunner_service.service[0].service_url), null)
+  description = "Public ECS Express service URL."
+  value       = try(trimspace(data.external.ecs_express_service_endpoint[0].result.endpoint) != "" ? data.external.ecs_express_service_endpoint[0].result.endpoint : null, null)
 }
