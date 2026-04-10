@@ -284,8 +284,7 @@ class IntegrationRunnerPreflightTest(unittest.TestCase):
                     {
                         "run_id": "example-run-id",
                         "github_repo": "repo-from-metadata",
-                        "manage_github_oidc_provider": False,
-                        "github_oidc_provider_arn": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+                        "create_github_oidc_provider": False,
                         "service_arn": "arn:aws:ecs:ap-southeast-2:123456789012:express-gateway-service/example-service",
                     }
                 ),
@@ -311,11 +310,7 @@ class IntegrationRunnerPreflightTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0)
             tfvars = (workdir / "integration.tfvars").read_text(encoding="utf-8")
             self.assertIn('github_repo         = "repo-from-metadata"', tfvars)
-            self.assertIn("manage_github_oidc_provider = false", tfvars)
-            self.assertIn(
-                'github_oidc_provider_arn    = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"',
-                tfvars,
-            )
+            self.assertIn("create_github_oidc_provider = false", tfvars)
 
     def test_second_apply_reuses_existing_metadata_settings(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -326,8 +321,7 @@ class IntegrationRunnerPreflightTest(unittest.TestCase):
                     {
                         "run_id": "example-run-id",
                         "github_repo": "repo-from-metadata",
-                        "manage_github_oidc_provider": False,
-                        "github_oidc_provider_arn": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+                        "create_github_oidc_provider": False,
                         "service_arn": "arn:aws:ecs:ap-southeast-2:123456789012:express-gateway-service/example-service",
                     }
                 ),
@@ -366,7 +360,7 @@ class IntegrationRunnerPreflightTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0)
             tfvars = (workdir / "integration.tfvars").read_text(encoding="utf-8")
             self.assertIn('github_repo         = "repo-from-metadata"', tfvars)
-            self.assertIn("manage_github_oidc_provider = false", tfvars)
+            self.assertIn("create_github_oidc_provider = false", tfvars)
             self.assertIn("ecr_force_delete    = true", tfvars)
 
     def test_destroy_old_metadata_falls_back_to_env_repo_and_default_oidc_management(self) -> None:
@@ -393,7 +387,7 @@ class IntegrationRunnerPreflightTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0)
             tfvars = (workdir / "integration.tfvars").read_text(encoding="utf-8")
             self.assertIn('github_repo         = "repo-from-env"', tfvars)
-            self.assertIn("manage_github_oidc_provider = true", tfvars)
+            self.assertIn("create_github_oidc_provider = true", tfvars)
 
     def test_reused_metadata_run_id_must_match_current_run_id(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -404,8 +398,7 @@ class IntegrationRunnerPreflightTest(unittest.TestCase):
                     {
                         "run_id": "different-run-id",
                         "github_repo": "repo-from-metadata",
-                        "manage_github_oidc_provider": False,
-                        "github_oidc_provider_arn": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+                        "create_github_oidc_provider": False,
                     }
                 ),
                 encoding="utf-8",
@@ -477,7 +470,7 @@ class IntegrationRunnerPreflightTest(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0)
-        self.assertIn("Manage GitHub OIDC provider: false", result.stdout)
+        self.assertIn("Create GitHub OIDC provider: false", result.stdout)
 
     def test_foundation_apply_aborts_on_fatal_oidc_probe_conflict(self) -> None:
         result = self._run_mode(
@@ -521,8 +514,7 @@ class IntegrationRunnerPreflightTest(unittest.TestCase):
                         "image_tag": "original-image-tag",
                         "state_key": "original/state/key.tfstate",
                         "github_repo": "repo-from-metadata",
-                        "manage_github_oidc_provider": False,
-                        "github_oidc_provider_arn": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
+                        "create_github_oidc_provider": False,
                         "service_arn": "arn:aws:ecs:ap-southeast-2:123456789012:express-gateway-service/original-service",
                     }
                 ),
@@ -836,7 +828,30 @@ class IntegrationRunnerPreflightTest(unittest.TestCase):
         path_without_git: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
-        env.pop("GITHUB_REPO", None)
+        for name in (
+            "AWS_REGION",
+            "TF_STATE_BUCKET",
+            "GITHUB_OWNER",
+            "GITHUB_REPO",
+            "GITHUB_TOKEN",
+            "TF_VAR_github_token",
+            "AWS_PROFILE",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "AWS_INTEGRATION_RUN_ID",
+            "AWS_INTEGRATION_WORKDIR",
+            "AWS_INTEGRATION_KEEP_WORKDIR",
+            "AWS_INTEGRATION_AUTO_APPROVE",
+            "AWS_INTEGRATION_AWS_ACCOUNT_ID",
+            "AWS_INTEGRATION_CLEANUP_TIMEOUT_SECONDS",
+            "AWS_INTEGRATION_SIMULATE_FAILURE_AT",
+            "AWS_INTEGRATION_VERIFY_PATH",
+            "AWS_INTEGRATION_ALLOW_OIDC_PROBE_FALLBACK",
+            "AWS_INTEGRATION_PROD_TFVARS_PATH",
+            "AWS_INTEGRATION_FORCE_COLOR",
+        ):
+            env.pop(name, None)
         env.update(extra_env)
 
         with tempfile.TemporaryDirectory() as temp_dir:

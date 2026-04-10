@@ -93,8 +93,7 @@ class AwsIntegrationRunner:
 
         self.github_repo_value = ""
         self.github_token_value = ""
-        self.manage_github_oidc_provider = True
-        self.github_oidc_provider_arn_value = ""
+        self.create_github_oidc_provider = True
 
         self.current_step = "startup"
         self.primary_failure_step = ""
@@ -627,8 +626,7 @@ Environment overrides:
         tf_state_bucket_placeholder = os.environ.get("TF_STATE_BUCKET", "__SET_TF_STATE_BUCKET__")
         self.github_token_value = self.resolve_github_token_value()
 
-        self.manage_github_oidc_provider = True
-        self.github_oidc_provider_arn_value = ""
+        self.create_github_oidc_provider = True
         metadata = self.load_metadata()
         if metadata:
             self.integration_prefix = metadata.get("integration_prefix") or self.integration_prefix
@@ -639,13 +637,12 @@ Environment overrides:
             repo = metadata.get("github_repo")
             if repo:
                 self.github_repo_value = repo
-            if "manage_github_oidc_provider" in metadata and metadata["manage_github_oidc_provider"] is not None:
-                self.manage_github_oidc_provider = bool(metadata["manage_github_oidc_provider"])
-            arn = metadata.get("github_oidc_provider_arn")
-            if arn:
-                self.github_oidc_provider_arn_value = arn
-            if "manage_github_oidc_provider" not in metadata and arn:
-                self.manage_github_oidc_provider = False
+            if "create_github_oidc_provider" in metadata and metadata["create_github_oidc_provider"] is not None:
+                self.create_github_oidc_provider = bool(metadata["create_github_oidc_provider"])
+            elif "manage_github_oidc_provider" in metadata and metadata["manage_github_oidc_provider"] is not None:
+                self.create_github_oidc_provider = bool(metadata["manage_github_oidc_provider"])
+            elif metadata.get("github_oidc_provider_arn"):
+                self.create_github_oidc_provider = False
             service_arn = metadata.get("service_arn")
             if service_arn:
                 self.service_arn_value = service_arn
@@ -667,8 +664,7 @@ Environment overrides:
             if can_probe:
                 probe = self.probe_existing_oidc_provider()
                 if probe.status == "found" and probe.arn:
-                    self.manage_github_oidc_provider = False
-                    self.github_oidc_provider_arn_value = probe.arn
+                    self.create_github_oidc_provider = False
                 elif probe.status == "warning":
                     print(f"warning: {probe.message}; falling back to Terraform-managed GitHub OIDC provider", file=sys.stderr)
                 elif probe.status == "error":
@@ -680,10 +676,6 @@ Environment overrides:
 
         # After metadata and resolve_github_repo_value, ensure placeholder is set for tfvars
         github_repo_placeholder = self.github_repo_value or github_repo_placeholder
-
-        github_oidc_provider_arn_literal = "null"
-        if self.github_oidc_provider_arn_value:
-            github_oidc_provider_arn_literal = json.dumps(self.github_oidc_provider_arn_value)
 
         self.tfvars_path.write_text(
             "\n".join(
@@ -698,8 +690,7 @@ Environment overrides:
                     f'github_owner        = "{github_owner_placeholder}"',
                     f'github_repo         = "{github_repo_placeholder}"',
                     'github_branch       = "main"',
-                    f"manage_github_oidc_provider = {'true' if self.manage_github_oidc_provider else 'false'}",
-                    f"github_oidc_provider_arn    = {github_oidc_provider_arn_literal}",
+                    f"create_github_oidc_provider = {'true' if self.create_github_oidc_provider else 'false'}",
                     "",
                 ]
             ),
@@ -726,8 +717,7 @@ Environment overrides:
             "image_tag": self.image_tag,
             "state_key": self.state_key,
             "github_repo": github_repo_placeholder,
-            "manage_github_oidc_provider": self.manage_github_oidc_provider,
-            "github_oidc_provider_arn": self.github_oidc_provider_arn_value or None,
+            "create_github_oidc_provider": self.create_github_oidc_provider,
             "service_arn": self.service_arn_value or None,
             "tfvars_path": str(self.tfvars_path),
             "backend_config_path": str(self.backend_config_path),
@@ -744,7 +734,7 @@ Environment overrides:
         print(f"Derived service name: {self.service_name}")
         print(f"Derived ECR repository name: {self.ecr_repository_name}")
         print(f"Derived GitHub repo: {github_repo_placeholder}")
-        print(f"Manage GitHub OIDC provider: {'false' if not self.manage_github_oidc_provider else 'true'}")
+        print(f"Create GitHub OIDC provider: {'true' if self.create_github_oidc_provider else 'false'}")
         print(f"Expected bootstrap image tag: {self.image_tag}")
 
     def run_isolated_tofu_init(self) -> None:

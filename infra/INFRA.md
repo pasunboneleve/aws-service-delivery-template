@@ -3,7 +3,8 @@
 This directory provisions the AWS-side delivery foundation:
 
 - an ECR repository for application images
-- an IAM OIDC provider for GitHub Actions
+- reuse of the account's GitHub Actions IAM OIDC provider by default, or
+  creation of one when explicitly requested
 - an IAM deploy role that GitHub Actions can assume on `main`
 - an ECS task execution role that allows the runtime to pull from ECR
 - an ECS Express infrastructure role for AWS-managed networking and scaling
@@ -58,6 +59,11 @@ the AWS CLI can successfully use the same profile.
 cp prod.tfvars.template prod.tfvars
 tofu apply
 ```
+
+By default, the stack reuses the current AWS account's standard GitHub
+Actions OIDC provider ARN. Set `create_github_oidc_provider = true` only
+if you want this stack to create and manage
+`https://token.actions.githubusercontent.com` itself.
 
 Useful outputs include:
 

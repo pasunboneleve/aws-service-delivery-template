@@ -128,12 +128,14 @@ Current TODO boundary:
 
 Account-level behavior:
 
-- normal template stacks still manage their own GitHub Actions IAM OIDC
-  provider by default
+- normal template stacks reuse the current account's well-known GitHub
+  Actions IAM OIDC provider ARN by default
+- set `create_github_oidc_provider = true` only when you explicitly want
+  Terraform/OpenTofu to create and manage that provider in the account
 - the AWS integration runner now checks for an existing provider for
   `https://token.actions.githubusercontent.com` and, when it can read a
-  compatible provider, writes isolated tfvars that reuse that ARN instead of
-  creating a duplicate
+  compatible provider, writes isolated tfvars that keep provider creation
+  disabled instead of creating a duplicate
 - detecting an existing provider requires AWS IAM read access for:
   - `iam:ListOpenIDConnectProviders`
   - `iam:GetOpenIDConnectProvider`
