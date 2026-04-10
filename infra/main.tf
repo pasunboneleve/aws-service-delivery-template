@@ -7,7 +7,7 @@ moved {
 
 locals {
   ecs_express_image_identifier = "${aws_ecr_repository.images.repository_url}:${var.ecs_express_image_tag}"
-  github_oidc_provider_arn     = var.create_github_oidc_provider ? aws_iam_openid_connect_provider.github[0].arn : "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/token.actions.githubusercontent.com"
+  github_oidc_provider_arn     = var.create_github_oidc_provider ? one(aws_iam_openid_connect_provider.github[*].arn) : "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/token.actions.githubusercontent.com"
   ecs_express_stack_template = jsonencode({
     AWSTemplateFormatVersion = "2010-09-09"
     Parameters = {
