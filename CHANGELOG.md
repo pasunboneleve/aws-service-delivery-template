@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## [v0.3.1] - 2026-04-10
+
+### Changed
+
+- Made GitHub Actions OIDC provider creation explicit in Terraform/OpenTofu with `create_github_oidc_provider`, which now defaults to reusing the current AWS account's standard GitHub OIDC provider ARN instead of trying to create a duplicate provider.
+- Updated the isolated AWS integration runner and its tests to match the new OIDC ownership contract and preserve backward compatibility for older integration metadata.
+- Updated infrastructure and AWS integration documentation to describe the new default OIDC provider reuse behavior and when to opt into provider creation.
+- Switched conditional OIDC provider ARN resolution to `one(...)` for safer Terraform/OpenTofu evaluation.
+- Ignored the local `.codex` file in the repository's `.gitignore`.
+
 ## [v0.3.0] - 2026-04-06
 
 ### Changed
