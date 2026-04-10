@@ -52,6 +52,11 @@ If backend authentication fails here, see the troubleshooting note in
 tofu apply
 ```
 
+By default, the stack reuses the current AWS account's standard GitHub
+Actions OIDC provider ARN. Set `create_github_oidc_provider = true` only
+when you explicitly want Terraform/OpenTofu to create and manage that
+provider.
+
 4. Push an application with a `Dockerfile` to `main`.
 
 Terraform will populate the GitHub Actions secrets and variables used by the workflow.
