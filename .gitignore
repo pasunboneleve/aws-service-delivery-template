@@ -43,3 +43,6 @@ infra/*.auto.tfvars
 .dolt/
 *.db
 .beads-credential-key
+
+# dress-rehearsal logs and state
+**/.dress-runs/
