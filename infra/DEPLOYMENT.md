@@ -79,13 +79,3 @@ tofu apply
 
 It runs Terraform checks, the repository contract tests, and optional
 `shellcheck` and `actionlint` if they are available locally.
-
-- Real AWS integration readiness and execution:
-
-```bash
-../scripts/run-aws-integration.sh preflight
-../scripts/run-aws-integration.sh run
-```
-
-For the full integration runner behavior, failure handling, and manual destroy
-mode, see [../docs/aws-integration.md](../docs/aws-integration.md).
