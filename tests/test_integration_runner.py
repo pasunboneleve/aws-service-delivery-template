@@ -811,6 +811,121 @@ class IntegrationRunnerPreflightTest(unittest.TestCase):
             destroy_log = (workdir / "destroy.log").read_text(encoding="utf-8")
             self.assertIn("Still destroying... [10s elapsed]", destroy_log)
 
+    def test_destroy_fails_when_residue_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workdir = Path(temp_dir) / "workdir"
+            workdir.mkdir()
+            (workdir / "integration-metadata.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "residue-run",
+                        "aws_region": "ap-southeast-2",
+                        "service_name": "residue-service",
+                        "github_repo": "repo-from-metadata",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = self._run_mode(
+                mode="destroy",
+                extra_env={
+                    "AWS_REGION": "ap-southeast-2",
+                    "TF_STATE_BUCKET": "example-bucket",
+                    "GITHUB_OWNER": "example-owner",
+                    "AWS_INTEGRATION_RUN_ID": "residue-run",
+                    "AWS_INTEGRATION_WORKDIR": str(workdir),
+                },
+                tofu_script="#!/usr/bin/env bash\nexit 0\n",
+                aws_script=(
+                    "#!/usr/bin/env bash\n"
+                    "case \"$*\" in\n"
+                    "  'ecs list-services'*) printf '[\"arn:aws:ecs:ap-southeast-2:123:service/default/residue-service\"]' ; exit 0 ;;\n"
+                    "  'ecs describe-services'*) printf '[\"arn:aws:ecs:ap-southeast-2:123:service/default/residue-service\"]' ; exit 0 ;;\n"
+                    "  'cloudwatch describe-alarms'*) printf '[]' ; exit 0 ;;\n"
+                    "  *) exit 1 ;;\n"
+                    "esac\n"
+                ),
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Found ECS services stuck in DRAINING: arn:aws:ecs:ap-southeast-2:123:service/default/residue-service", result.stderr)
+
+    def test_destroy_fails_when_orphaned_alarms_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workdir = Path(temp_dir) / "workdir"
+            workdir.mkdir()
+            (workdir / "integration-metadata.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "alarm-run",
+                        "aws_region": "ap-southeast-2",
+                        "service_name": "alarm-service",
+                        "github_repo": "repo-from-metadata",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = self._run_mode(
+                mode="destroy",
+                extra_env={
+                    "AWS_REGION": "ap-southeast-2",
+                    "TF_STATE_BUCKET": "example-bucket",
+                    "GITHUB_OWNER": "example-owner",
+                    "AWS_INTEGRATION_RUN_ID": "alarm-run",
+                    "AWS_INTEGRATION_WORKDIR": str(workdir),
+                },
+                tofu_script="#!/usr/bin/env bash\nexit 0\n",
+                aws_script=(
+                    "#!/usr/bin/env bash\n"
+                    "case \"$*\" in\n"
+                    "  'ecs list-services'*) printf '[]' ; exit 0 ;;\n"
+                    "  'cloudwatch describe-alarms'*) printf '[\"default/alarm-service/RollbackAlarm\"]' ; exit 0 ;;\n"
+                    "  *) exit 1 ;;\n"
+                    "esac\n"
+                ),
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Found orphaned rollback alarms: default/alarm-service/RollbackAlarm", result.stderr)
+
+    def test_destroy_succeeds_when_no_residue_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workdir = Path(temp_dir) / "workdir"
+            workdir.mkdir()
+            (workdir / "integration-metadata.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "clean-run",
+                        "aws_region": "ap-southeast-2",
+                        "service_name": "clean-service",
+                        "github_repo": "repo-from-metadata",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = self._run_mode(
+                mode="destroy",
+                extra_env={
+                    "AWS_REGION": "ap-southeast-2",
+                    "TF_STATE_BUCKET": "example-bucket",
+                    "GITHUB_OWNER": "example-owner",
+                    "AWS_INTEGRATION_RUN_ID": "clean-run",
+                    "AWS_INTEGRATION_WORKDIR": str(workdir),
+                },
+                tofu_script="#!/usr/bin/env bash\nexit 0\n",
+                aws_script=(
+                    "#!/usr/bin/env bash\n"
+                    "case \"$*\" in\n"
+                    "  'ecs list-services'*) printf '[]' ; exit 0 ;;\n"
+                    "  'cloudwatch describe-alarms'*) printf '[]' ; exit 0 ;;\n"
+                    "  *) exit 1 ;;\n"
+                    "esac\n"
+                ),
+            )
+
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("No residue found.", result.stderr)
+
     def _run_preflight(
         self,
         extra_env: dict[str, str],

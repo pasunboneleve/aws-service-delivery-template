@@ -84,6 +84,7 @@ class AwsIntegrationRunner:
         self.ecr_repository_name = ""
         self.image_tag = ""
         self.state_key = ""
+        self.materialized_region = ""
         self.tfvars_path: Path | None = None
         self.backend_config_path: Path | None = None
         self.metadata_path: Path | None = None
@@ -625,6 +626,7 @@ Environment overrides:
         github_owner_placeholder = os.environ.get("GITHUB_OWNER", "__SET_GITHUB_OWNER__")
         tf_state_bucket_placeholder = os.environ.get("TF_STATE_BUCKET", "__SET_TF_STATE_BUCKET__")
         self.github_token_value = self.resolve_github_token_value()
+        self.materialized_region = aws_region_placeholder if aws_region_placeholder != "__SET_AWS_REGION__" else ""
 
         self.create_github_oidc_provider = True
         metadata = self.load_metadata()
@@ -634,6 +636,8 @@ Environment overrides:
             self.ecr_repository_name = metadata.get("ecr_repository_name") or self.ecr_repository_name
             self.image_tag = metadata.get("image_tag") or self.image_tag
             self.state_key = metadata.get("state_key") or self.state_key
+            if metadata.get("aws_region"):
+                self.materialized_region = metadata["aws_region"]
             repo = metadata.get("github_repo")
             if repo:
                 self.github_repo_value = repo
@@ -711,6 +715,7 @@ Environment overrides:
         )
         metadata_payload = {
             "run_id": self.run_id,
+            "aws_region": self.materialized_region,
             "integration_prefix": self.integration_prefix,
             "service_name": self.service_name,
             "ecr_repository_name": self.ecr_repository_name,
@@ -995,6 +1000,125 @@ Environment overrides:
 
         self.note(f"Destroy log: {self.tofu_destroy_log_path}")
         self.emit_step_status("destroy", "Destroy succeeded.", COLOR_GREEN)
+        self.verify_no_residue()
+
+    def verify_no_residue(self) -> None:
+        self.log_step("verification-residue", "Verifying no ECS Express residue remains")
+        self.require_command("aws")
+        region = self.materialized_region
+        if not region:
+            raise RunnerError("Cannot verify residue: materialized_region not set")
+
+        # Allow some time for eventual consistency (ECS draining/deletion, alarm cleanup)
+        max_attempts = 3
+        delay_seconds = 5
+
+        for attempt in range(1, max_attempts + 1):
+            if attempt > 1:
+                self.note(f"Residue check attempt {attempt}/{max_attempts} after {delay_seconds}s delay...")
+                time.sleep(delay_seconds)
+
+            residue_found = False
+            error_message = ""
+
+            # Check for services in DRAINING status
+            # Note: We filter for our service name prefix if possible, but status is the primary concern
+            completed = subprocess.run(
+                [
+                    "aws",
+                    "ecs",
+                    "list-services",
+                    "--region",
+                    region,
+                    "--query",
+                    "serviceArns",
+                    "--output",
+                    "json",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if completed.returncode != 0:
+                raise RunnerError(f"Failed to list ECS services in region {region}: {completed.stderr.strip()}")
+
+            if completed.stdout.strip():
+                service_arns = json.loads(completed.stdout)
+                # Batch describe services (max 10)
+                for i in range(0, len(service_arns), 10):
+                    batch = service_arns[i : i + 10]
+                    desc = subprocess.run(
+                        [
+                            "aws",
+                            "ecs",
+                            "describe-services",
+                            "--region",
+                            region,
+                            "--services",
+                        ]
+                        + batch
+                        + [
+                            "--query",
+                            "services[?status=='DRAINING'].serviceArn",
+                            "--output",
+                            "json",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    if desc.returncode != 0:
+                        raise RunnerError(f"Failed to describe ECS services in region {region}: {desc.stderr.strip()}")
+
+                    if desc.stdout.strip():
+                        draining = json.loads(desc.stdout)
+                        # Filter for our service name to avoid false positives from other runs
+                        # though ideally NOTHING should be draining.
+                        ours = [arn for arn in draining if self.service_name in arn]
+                        if ours:
+                            residue_found = True
+                            error_message = f"Found ECS services stuck in DRAINING: {', '.join(ours)}"
+                            break
+                if residue_found:
+                    continue
+
+            # Check for orphaned rollback alarms
+            # Pattern: default/<service-name>/RollbackAlarm
+            alarm_prefix = f"default/{self.service_name}/"
+            alarms = subprocess.run(
+                [
+                    "aws",
+                    "cloudwatch",
+                    "describe-alarms",
+                    "--region",
+                    region,
+                    "--alarm-name-prefix",
+                    alarm_prefix,
+                    "--query",
+                    "MetricAlarms[*].AlarmName",
+                    "--output",
+                    "json",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if alarms.returncode != 0:
+                raise RunnerError(f"Failed to describe CloudWatch alarms in region {region}: {alarms.stderr.strip()}")
+
+            if alarms.stdout.strip():
+                found_alarms = json.loads(alarms.stdout)
+                if found_alarms:
+                    residue_found = True
+                    error_message = f"Found orphaned rollback alarms: {', '.join(found_alarms)}"
+                    continue
+
+            # If we reached here, no residue was found
+            self.emit_step_status("verification-residue", "No residue found.", COLOR_GREEN)
+            return
+
+        # If we exhausted attempts and still found residue
+        raise RunnerError(error_message)
 
     def attempt_cleanup_destroy(self) -> int:
         if not self.cleanup_required:

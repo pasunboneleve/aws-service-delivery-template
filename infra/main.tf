@@ -113,6 +113,9 @@ data "aws_iam_policy_document" "github_actions_permissions" {
     actions = [
       "ecs:DescribeExpressGatewayService",
       "ecs:UpdateExpressGatewayService",
+      "ecs:ListServices",
+      "ecs:DescribeServices",
+      "cloudwatch:DescribeAlarms",
     ]
     resources = ["*"]
   }
@@ -179,9 +182,25 @@ resource "aws_iam_role_policy_attachment" "ecs_task_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+data "aws_iam_policy_document" "ecs_express_infrastructure" {
+  statement {
+    sid = "ELBReadOperations"
+    actions = [
+      "elasticloadbalancing:DescribeTargetHealth",
+    ]
+    resources = ["*"]
+  }
+}
+
 resource "aws_iam_role" "ecs_express_infrastructure" {
   name               = "${var.service_name}-ecs-express-infra"
   assume_role_policy = data.aws_iam_policy_document.ecs_express_infrastructure_assume_role.json
+}
+
+resource "aws_iam_role_policy" "ecs_express_infrastructure" {
+  name   = "${var.service_name}-ecs-express-infra"
+  role   = aws_iam_role.ecs_express_infrastructure.id
+  policy = data.aws_iam_policy_document.ecs_express_infrastructure.json
 }
 
 resource "aws_iam_role_policy_attachment" "ecs_express_infrastructure" {
@@ -204,6 +223,8 @@ resource "aws_cloudformation_stack" "ecs_express_service" {
 
   depends_on = [
     terraform_data.ensure_ecs_service_linked_role,
+    aws_iam_role_policy_attachment.ecs_express_infrastructure,
+    aws_iam_role_policy.ecs_express_infrastructure,
   ]
 }
 
